@@ -46,6 +46,13 @@ namespace Nevishk
 
         void Start()
         {
+            if (TMP_Settings.instance == null)
+            {
+                Debug.LogError("[Nevishk] TextMeshPro resources are missing. Stop Play, then use " +
+                               "Window ▸ TextMeshPro ▸ Import TMP Essential Resources and press Play again.");
+                enabled = false; return;
+            }
+
             _db = LoreDatabase.Load();
             if (_db == null) { enabled = false; return; }
 
