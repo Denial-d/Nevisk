@@ -30,14 +30,15 @@ namespace Nevishk
                     _wired = true;
                     _readingItalic = Create("Fonts/PTSerif-Italic");
                     _readingBold = Create("Fonts/PTSerif-Bold");
+                    // fontWeightTable's setter is internal in Unity 6's TextMeshPro; edit the array in place.
                     var table = _reading.fontWeightTable;
-                    if (_readingItalic != null) table[4].italicTypeface = _readingItalic;   // 400 italic
-                    if (_readingBold != null) table[7].regularTypeface = _readingBold;      // 700 → <b>
-                    _reading.fontWeightTable = table;
-
+                    if (table != null && table.Length > 7)
+                    {
+                        if (_readingItalic != null) table[4].italicTypeface = _readingItalic;   // 400 italic → <i>
+                        if (_readingBold != null) table[7].regularTypeface = _readingBold;      // 700 → <b>
+                    }
                     var uiTable = UI.fontWeightTable;
-                    if (UIBold != UI) uiTable[7].regularTypeface = UIBold;
-                    UI.fontWeightTable = uiTable;
+                    if (uiTable != null && uiTable.Length > 7 && UIBold != UI) uiTable[7].regularTypeface = UIBold;
                 }
                 return _reading;
             }
