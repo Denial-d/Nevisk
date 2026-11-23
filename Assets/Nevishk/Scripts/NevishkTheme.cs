@@ -30,7 +30,10 @@ namespace Nevishk
         public static readonly Color GroundTint      = Hex("#A89F8C");   // multiplies the paper-white base map
         public static readonly Color Surroundings    = Hex("#201E1A");
         public static readonly Color Concrete        = Hex("#B5AFA4");
-        public const float DistrictTint = 0.16f;                         // how much district colour reaches buildings
+        public const float DistrictTint = 0.16f;
+        public static readonly Color TerrainTint     = Hex("#E8E2D6");   // multiplies the generated ground colours
+        public static readonly Color Water           = Hex("#1B2A2E");
+        public static readonly Color SlabSide        = Hex("#2C2924");                         // how much district colour reaches buildings
         public static readonly Color SunColor        = Hex("#FFE1BC");
         public const float SunIntensity = 1.25f;
         public static readonly Vector3 SunAngles     = new Vector3(32f, -40f, 0f); // low sun → long shadows

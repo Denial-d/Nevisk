@@ -38,6 +38,7 @@ namespace Nevishk
         readonly Dictionary<Color, Material> _mats = new Dictionary<Color, Material>();
         MapPin _hovered, _selected;
         Transform _root;
+        NevishkTerrain _terrain;
 
         // ------------------------------------------------------------------ lifecycle
 
@@ -145,7 +146,7 @@ namespace Nevishk
             if (d == null || !_pins.TryGetValue(id, out var pin)) return;
             SetSelected(pin);
             _ui.ShowDistrict(id, fromPanel && _ui.PanelOpen);
-            FlyToWithPanel(UvToWorld(d.uv), 420f);
+            FlyToWithPanel(OnGround(d.uv), 420f);
         }
 
         void SelectLandmark(string id, bool fromPanel)
@@ -154,13 +155,13 @@ namespace Nevishk
             if (l == null || !_pins.TryGetValue(id, out var pin)) return;
             SetSelected(pin);
             _ui.ShowLandmark(id, fromPanel && _ui.PanelOpen);
-            FlyToWithPanel(UvToWorld(l.uv), 190f);
+            FlyToWithPanel(OnGround(l.uv), 190f);
         }
 
         void ResetView()
         {
             if (_ui != null) _ui.Close();
-            _cam.ResetView(new Vector3(0f, 0f, -_mapDepth * 0.04f), mapWidth * 0.8f);
+            _cam.ResetView(new Vector3(0f, 10f, -_mapDepth * 0.04f), mapWidth * 0.8f);
         }
 
         void SetSelected(MapPin pin)
@@ -224,6 +225,14 @@ namespace Nevishk
 
         float PxToWorld(float px) => px * mapWidth / _db.city.mapPixelSize[0];
 
+        /// Ground height at a map UV (0 if the terrain is missing).
+        float Ground(float u, float v) => _terrain != null ? _terrain.HeightAtUV(u, v) : 0f;
+        /// Water surface where there is water, otherwise ground.
+        float Surface(float u, float v) => _terrain != null ? _terrain.SurfaceAtUV(u, v) : 0f;
+        bool IsWater(float u, float v) => _terrain != null && !float.IsNaN(_terrain.WaterAtUV(u, v));
+
+        Vector3 OnGround(float[] uv, float above = 0f) => UvToWorld(uv, Surface(uv[0], uv[1]) + above);
+
         // ------------------------------------------------------------------ building the world
 
         void SetUpAtmosphere()
@@ -282,6 +291,10 @@ namespace Nevishk
 
         void BuildGround()
         {
+            _terrain = new NevishkTerrain(mapWidth, _mapDepth);
+            if (_terrain.Load()) { BuildTerrain(); return; }
+            _terrain = null;   // fall back to the flat map
+
             var ground = GameObject.CreatePrimitive(PrimitiveType.Quad);
             ground.name = "Base Map";
             ground.transform.SetParent(_root, false);
@@ -308,6 +321,47 @@ namespace Nevishk
             Destroy(apron.GetComponent<Collider>());
         }
 
+        void BuildTerrain()
+        {
+            var tex = Resources.Load<Texture2D>("nevishk_albedo");
+            if (tex != null) { tex.wrapMode = TextureWrapMode.Clamp; tex.anisoLevel = 8; }
+            Material ground = groundMaterial != null ? new Material(groundMaterial) : NewMat(Color.white);
+            if (tex != null) { ground.SetTexture("_BaseMap", tex); ground.mainTexture = tex; }
+            ground.SetColor("_BaseColor", NevishkTheme.TerrainTint);
+            ground.SetFloat("_Smoothness", 0.04f);
+
+            var parent = new GameObject("Terrain").transform;
+            parent.SetParent(_root, false);
+            foreach (var mesh in _terrain.BuildGroundTiles())
+                AddMesh(parent, mesh.name, mesh, ground);
+
+            AddMesh(parent, "Slab Sides", _terrain.BuildSkirt(), NewMat(NevishkTheme.SlabSide));
+
+            var water = NewMat(NevishkTheme.Water);
+            water.SetFloat("_Smoothness", 0.9f);
+            AddMesh(parent, "Мырла", _terrain.BuildWater(), water);
+
+            // Dark floor under the slab to catch its shadow.
+            var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            floor.name = "Floor";
+            floor.transform.SetParent(_root, false);
+            floor.transform.localPosition = new Vector3(0, _terrain.BaseY - 0.5f, 0);
+            floor.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            floor.transform.localScale = new Vector3(mapWidth * 8f, mapWidth * 8f, 1f);
+            floor.GetComponent<Renderer>().sharedMaterial = NewMat(NevishkTheme.Surroundings);
+            Destroy(floor.GetComponent<Collider>());
+
+            _cam.groundHeight = p => _terrain.HeightAtWorld(p);
+        }
+
+        void AddMesh(Transform parent, string name, Mesh mesh, Material mat)
+        {
+            var go = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
+            go.transform.SetParent(parent, false);
+            go.GetComponent<MeshFilter>().sharedMesh = mesh;
+            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+        }
+
         void BuildBlocksAndTrees()
         {
             var asset = Resources.Load<TextAsset>("nevishk_layout");
@@ -327,11 +381,17 @@ namespace Nevishk
                 {
                     var r = (List<object>)o;
                     float u = F(r[0]), v = F(r[1]), w = PxToWorld(F(r[2])), d = PxToWorld(F(r[3])), h = F(r[4]), yaw = F(r[5]);
-                    Vector3 p = UvToWorld(new[] { u, v }, h / 2f);
+                    // Stand on the lowest corner so nothing floats on a slope; top stays level.
+                    float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
+                    float g0 = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
+                                         Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv))) - 0.5f;
+                    float g1 = Mathf.Max(Ground(u, v), g0);
+                    float top = g1 + h;
+                    Vector3 p = UvToWorld(new[] { u, v }, (g0 + top) / 2f);
                     combine.Add(new CombineInstance
                     {
                         mesh = cube,
-                        transform = Matrix4x4.TRS(p, Quaternion.Euler(0, yaw, 0), new Vector3(w, h, d))
+                        transform = Matrix4x4.TRS(p, Quaternion.Euler(0, yaw, 0), new Vector3(w, top - g0, d))
                     });
                 }
                 AddCombined("Blocks · " + kv.Key, combine, col);
@@ -343,8 +403,9 @@ namespace Nevishk
             foreach (var o in (List<object>)layout["trees"])
             {
                 var r = (List<object>)o;
-                float s = F(r[2]);
-                Vector3 p = UvToWorld(new[] { F(r[0]), F(r[1]) });
+                float s = F(r[2]), tu = F(r[0]), tv = F(r[1]);
+                if (IsWater(tu, tv)) continue;
+                Vector3 p = UvToWorld(new[] { tu, tv }, Ground(tu, tv) - 0.5f);
                 trees.Add(new CombineInstance
                 {
                     mesh = cone,
@@ -359,7 +420,7 @@ namespace Nevishk
             Mesh cube = PrimitiveMesh(PrimitiveType.Cube), cyl = PrimitiveMesh(PrimitiveType.Cylinder);
             foreach (var l in _db.landmarks)
             {
-                Vector3 p = UvToWorld(l.uv);
+                Vector3 p = OnGround(l.uv);
                 switch (l.name)
                 {
                     case "Невишк Prime City":
@@ -371,8 +432,9 @@ namespace Nevishk
                         Prop("Кран", cube, p + new Vector3(-10, 58, -4), new Vector3(1.2f, 1.2f, 18), new Color(0.85f, 0.6f, 0.15f), 0f);
                         break;
                     case "Балаур":
-                        var rock = Prop("Балаур", PrimitiveMesh(PrimitiveType.Sphere), p + new Vector3(0, 3, 0),
-                                        new Vector3(16, 12, 22), new Color(0.48f, 0.44f, 0.38f), 0.1f);
+                        // A rock island where the Мырла forks.
+                        var rock = Prop("Балаур", PrimitiveMesh(PrimitiveType.Sphere), p + new Vector3(0, 2, 0),
+                                        new Vector3(18, 22, 26), new Color(0.48f, 0.44f, 0.38f), 0.1f);
                         rock.transform.rotation = Quaternion.Euler(0, 35, 0);
                         var fire = new GameObject("Огонь в пасти").AddComponent<Light>();
                         fire.transform.SetParent(rock.transform, false);
@@ -400,7 +462,7 @@ namespace Nevishk
             {
                 var go = new GameObject("District · " + d.name);
                 go.transform.SetParent(pinRoot, false);
-                go.transform.position = UvToWorld(d.uv, districtLabelHeight);
+                go.transform.position = OnGround(d.uv, districtLabelHeight);
                 var pin = go.AddComponent<MapPin>();
                 pin.kind = PinKind.District; pin.id = d.id; pin.hasLore = !string.IsNullOrEmpty(d.text);
                 var col = go.AddComponent<SphereCollider>(); col.radius = 22f;
@@ -413,7 +475,7 @@ namespace Nevishk
             {
                 var go = new GameObject("Landmark · " + l.name);
                 go.transform.SetParent(pinRoot, false);
-                go.transform.position = UvToWorld(l.uv);
+                go.transform.position = OnGround(l.uv);
                 var pin = go.AddComponent<MapPin>();
                 pin.kind = PinKind.Landmark; pin.id = l.id; pin.hasLore = !string.IsNullOrEmpty(l.text);
 

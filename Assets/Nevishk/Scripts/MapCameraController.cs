@@ -31,6 +31,8 @@ namespace Nevishk
 
         /// <summary>True while a button/finger is held and has moved past the drag threshold.</summary>
         public bool IsDragging => _held && _dragged;
+        /// Optional: ground height under a world point, so the camera never dips into hills.
+        public System.Func<Vector3, float> groundHeight;
         /// <summary>Stays true after release until the next press, so a drag never counts as a click.</summary>
         public bool LastPressWasDrag => _dragged;
         bool _held, _dragged;
@@ -168,13 +170,18 @@ namespace Nevishk
             _pitchT = Mathf.Clamp(_pitchT, minPitch, maxPitch);
             _focusT.x = Mathf.Clamp(_focusT.x, panBounds.xMin, panBounds.xMax);
             _focusT.z = Mathf.Clamp(_focusT.z, panBounds.yMin, panBounds.yMax);
-            _focusT.y = 0f;
         }
 
         void Apply()
         {
             Quaternion rot = Quaternion.Euler(pitch, yaw, 0f);
-            transform.position = focus - rot * Vector3.forward * distance;
+            Vector3 pos = focus - rot * Vector3.forward * distance;
+            if (groundHeight != null)
+            {
+                float floor = groundHeight(pos) + 6f;
+                if (pos.y < floor) pos.y = floor;
+            }
+            transform.position = pos;
             transform.rotation = rot;
         }
     }

@@ -55,14 +55,17 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 |---|---|
 | `Resources/nevishk_lore.json` | 9 districts, 50 landmarks and 12 archive documents, taken from the Miro board |
 | `Resources/nevishk_layout.json` | Placeholder building footprints and trees, scattered inside each district outline |
-| `Resources/nevishk_basemap.png` | The hand-drawn district map from the board, used as the ground texture |
+| `Resources/nevishk_basemap.png` | The hand-drawn district map from the board (source for the terrain) |
+| `Resources/nevishk_terrain.bytes` | 3D terrain: heights and water levels on a 640×291 grid |
+| `Resources/nevishk_albedo.png` | Ground colours for the terrain, keeping the map's ink lines |
+| `Scripts/NevishkTerrain.cs` | Builds the terrain slab, river water and side walls; height lookup for everything placed on it |
 | `Resources/Fonts` | PT Sans, PT Serif, Playfair Display (all Cyrillic, SIL Open Font License; licences included) |
 | `Plugins/WebGL/NevishkBrowser.jslib` | Deep links and reduced-motion detection in the browser |
 | `Scripts/NevishkMap.cs` | Builds the city, pins and labels; handles hover, click and fly-to |
 | `Scripts/MapCameraController.cs` | Orbit, pan and zoom camera with touch support |
 | `Scripts/LorePanelUI.cs` | Runtime UI: district bar, tooltip, reading panel, archive |
 | `Scripts/Editor/NevishkSetup.cs` | The Nevishk menu: scene setup, web settings, web build |
-| `Tools/*.py` | The scripts that generated the JSON from the board export (for reference) |
+| `Tools/nevishk/*.py` | Scripts that generated the data. Re-run `build_terrain.py` after changing the base map. |
 
 ## Editing lore
 
