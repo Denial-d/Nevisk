@@ -1,0 +1,244 @@
+{
+ "models": [
+  {
+   "id": "model_00",
+   "type": "factory",
+   "uv": [
+    0.20391,
+    0.38554
+   ],
+   "size": [
+    34,
+    22
+   ],
+   "yaw": 0,
+   "landmark": "lm_010",
+   "label": "Виброприбор"
+  },
+  {
+   "id": "model_01",
+   "type": "factory",
+   "uv": [
+    0.28828,
+    0.35284
+   ],
+   "size": [
+    36,
+    22
+   ],
+   "yaw": 0,
+   "landmark": "lm_009",
+   "label": "МассПриводТрест"
+  },
+  {
+   "id": "model_02",
+   "type": "factory",
+   "uv": [
+    0.24844,
+    0.46299
+   ],
+   "size": [
+    32,
+    20
+   ],
+   "yaw": 0,
+   "landmark": "lm_008",
+   "label": "Cyber-Agro"
+  },
+  {
+   "id": "model_03",
+   "type": "houses",
+   "uv": [
+    0.51562,
+    0.0809
+   ],
+   "size": [
+    30,
+    22
+   ],
+   "yaw": 0,
+   "landmark": "lm_035",
+   "label": "Муты"
+  },
+  {
+   "id": "model_04",
+   "type": "manor",
+   "uv": [
+    0.55234,
+    0.1463
+   ],
+   "size": [
+    30,
+    18
+   ],
+   "yaw": 0,
+   "landmark": "lm_013",
+   "label": "Академическая усадьба"
+  },
+  {
+   "id": "model_05",
+   "type": "pair",
+   "uv": [
+    0.36016,
+    0.3821
+   ],
+   "size": [
+    24,
+    16
+   ],
+   "yaw": 0,
+   "landmark": "lm_012",
+   "label": "Канавник"
+  },
+  {
+   "id": "model_06",
+   "type": "depot",
+   "uv": [
+    0.38828,
+    0.41308
+   ],
+   "size": [
+    22,
+    18
+   ],
+   "yaw": 0,
+   "landmark": "lm_011",
+   "label": "Депо"
+  },
+  {
+   "id": "model_07",
+   "type": "slabs",
+   "uv": [
+    0.33516,
+    0.54561
+   ],
+   "size": [
+    34,
+    20
+   ],
+   "yaw": 0,
+   "landmark": "lm_038",
+   "label": "Безмолвные плиты"
+  },
+  {
+   "id": "model_08",
+   "type": "ruin",
+   "uv": [
+    0.25859,
+    0.59552
+   ],
+   "size": [
+    22,
+    18
+   ],
+   "yaw": 8,
+   "landmark": "lm_039",
+   "label": "Мёртвый завод"
+  },
+  {
+   "id": "model_09",
+   "type": "shed",
+   "uv": [
+    0.32266,
+    0.50086
+   ],
+   "size": [
+    44,
+    7
+   ],
+   "yaw": 0,
+   "landmark": "",
+   "label": ""
+  },
+  {
+   "id": "model_10",
+   "type": "ruin",
+   "uv": [
+    0.36328,
+    0.53012
+   ],
+   "size": [
+    12,
+    16
+   ],
+   "yaw": 0,
+   "landmark": "",
+   "label": ""
+  },
+  {
+   "id": "model_11",
+   "type": "ruin",
+   "uv": [
+    0.36016,
+    0.65232
+   ],
+   "size": [
+    14,
+    16
+   ],
+   "yaw": -6,
+   "landmark": "",
+   "label": ""
+  },
+  {
+   "id": "model_12",
+   "type": "spillway",
+   "uv": [
+    0.38828,
+    0.53701
+   ],
+   "size": [
+    8,
+    30
+   ],
+   "yaw": 0,
+   "landmark": "lm_040",
+   "label": "Гидросброс"
+  },
+  {
+   "id": "model_13",
+   "type": "gallery",
+   "uv": [
+    0.48984,
+    0.60413
+   ],
+   "size": [
+    30,
+    18
+   ],
+   "yaw": 0,
+   "landmark": "lm_002",
+   "label": "Галерея"
+  },
+  {
+   "id": "model_14",
+   "type": "towers",
+   "uv": [
+    0.54531,
+    0.66609
+   ],
+   "size": [
+    28,
+    22
+   ],
+   "yaw": 0,
+   "landmark": "lm_005",
+   "label": "Батрачник"
+  },
+  {
+   "id": "model_15",
+   "type": "chapel",
+   "uv": [
+    0.6875,
+    0.81583
+   ],
+   "size": [
+    14,
+    18
+   ],
+   "yaw": 0,
+   "landmark": "lm_003",
+   "label": "Храм бомжа"
+  }
+ ]
+}

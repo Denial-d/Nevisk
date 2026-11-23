@@ -40,6 +40,11 @@ namespace Nevishk
         Transform _root;
         NevishkTerrain _terrain;
 
+        /// A 3D building made from an icon on the base map.
+        class ModelSpot { public float u, v, rPx; public Vector3 pos; public float top, radius; public string label; }
+        readonly List<ModelSpot> _models = new List<ModelSpot>();
+        readonly Dictionary<string, ModelSpot> _modelByLandmark = new Dictionary<string, ModelSpot>();
+
         // ------------------------------------------------------------------ lifecycle
 
         void Start()
@@ -72,6 +77,7 @@ namespace Nevishk
 
             SetUpAtmosphere();
             BuildGround();
+            BuildModels();
             BuildBlocksAndTrees();
             BuildSpecialLandmarks();
             BuildPins();
@@ -364,6 +370,50 @@ namespace Nevishk
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
+        void BuildModels()
+        {
+            var asset = Resources.Load<TextAsset>("nevishk_models");
+            if (asset == null) return;
+            var root = new GameObject("Drawn Buildings").transform;
+            root.SetParent(_root, false);
+            var list = (MiniJson.Parse(asset.text) as Dictionary<string, object>)["models"] as List<object>;
+            int seed = 11;
+            foreach (var o in list)
+            {
+                var m = (Dictionary<string, object>)o;
+                var uv = (List<object>)m["uv"]; var size = (List<object>)m["size"];
+                float u = F(uv[0]), v = F(uv[1]), w = PxToWorld(F(size[0])), d = PxToWorld(F(size[1])), yaw = F(m["yaw"]);
+                // Stand on the lowest ground under the footprint so nothing floats.
+                float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
+                float g = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
+                                    Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv)));
+                g = Mathf.Min(g, Ground(u, v)) - 0.4f;
+                Vector3 pos = UvToWorld(new[] { u, v }, g);
+                var built = NevishkBuildings.Build((string)m["type"], root, pos, w, d, yaw, MatFor, seed++);
+                var spot = new ModelSpot
+                {
+                    u = u, v = v, rPx = Mathf.Max(F(size[0]), F(size[1])) * 0.5f,
+                    pos = pos, top = built.height, radius = built.radius, label = (string)m["label"]
+                };
+                _models.Add(spot);
+                string lid = (string)m["landmark"];
+                if (!string.IsNullOrEmpty(lid)) _modelByLandmark[lid] = spot;
+            }
+        }
+
+        /// Is a map UV within (model radius + margin px) of a drawn building?
+        bool NearModel(float u, float v, float marginPx)
+        {
+            int[] px = _db.city.mapPixelSize;
+            foreach (var s in _models)
+            {
+                float dx = (u - s.u) * px[0], dy = (v - s.v) * px[1];
+                float r = s.rPx + marginPx;
+                if (dx * dx + dy * dy < r * r) return true;
+            }
+            return false;
+        }
+
         void BuildBlocksAndTrees()
         {
             var asset = Resources.Load<TextAsset>("nevishk_layout");
@@ -383,6 +433,7 @@ namespace Nevishk
                 {
                     var r = (List<object>)o;
                     float u = F(r[0]), v = F(r[1]), w = PxToWorld(F(r[2])), d = PxToWorld(F(r[3])), h = F(r[4]), yaw = F(r[5]);
+                    if (NearModel(u, v, Mathf.Max(F(r[2]), F(r[3])) * 0.5f + 3f)) continue;   // make room for drawn buildings
                     // Stand on the lowest corner so nothing floats on a slope; top stays level.
                     float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
                     float g0 = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
@@ -406,7 +457,7 @@ namespace Nevishk
             {
                 var r = (List<object>)o;
                 float s = F(r[2]), tu = F(r[0]), tv = F(r[1]);
-                if (IsWater(tu, tv)) continue;
+                if (IsWater(tu, tv) || NearModel(tu, tv, 2f)) continue;
                 Vector3 p = UvToWorld(new[] { tu, tv }, Ground(tu, tv) - 0.5f);
                 trees.Add(new CombineInstance
                 {
@@ -444,7 +495,7 @@ namespace Nevishk
                         fire.type = LightType.Point; fire.color = new Color(1f, 0.45f, 0.15f); fire.range = 30f; fire.intensity = 4f;
                         break;
                     default:
-                        if (l.category == "production")
+                        if (l.category == "production" && !_modelByLandmark.ContainsKey(l.id))
                         {
                             Prop(l.name + " · цех", cube, p + new Vector3(6, 5, 4), new Vector3(16, 10, 10), new Color(0.62f, 0.52f, 0.52f), 0.1f);
                             Prop(l.name + " · труба", cyl, p + new Vector3(-6, 14, -4), new Vector3(3, 14, 3), new Color(0.55f, 0.35f, 0.32f), 0.1f);
@@ -481,6 +532,22 @@ namespace Nevishk
                 go.transform.position = OnGround(l.uv);
                 var pin = go.AddComponent<MapPin>();
                 pin.kind = PinKind.Landmark; pin.id = l.id; pin.hasLore = !string.IsNullOrEmpty(l.text);
+
+                if (_modelByLandmark.TryGetValue(l.id, out var spot))
+                {
+                    // The 3D building is the marker: no pole, the name floats above its roof.
+                    go.transform.position = spot.pos;
+                    pin.scaleWithDistance = false;
+                    var hit = go.AddComponent<SphereCollider>();
+                    hit.center = Vector3.up * spot.top * 0.5f;
+                    hit.radius = Mathf.Max(spot.radius, spot.top * 0.5f);
+                    pin.label = MakeLabel(go.transform, string.IsNullOrEmpty(spot.label) ? l.name : spot.label, 40f, NevishkTheme.Text, false);
+                    pin.label.transform.localPosition = Vector3.up * (spot.top + 8f);
+                    pin.label.alpha = 0f;
+                    pin.plate = MakePlate(pin.label, 3f, 1.6f);
+                    _pins[l.id] = pin;
+                    continue;
+                }
 
                 Color c = NevishkColors.ForCategory(_db, l.category);
                 float h = pin.hasLore ? pinHeight * 1.3f : pinHeight;
@@ -589,6 +656,16 @@ namespace Nevishk
         {
             if (_mats.TryGetValue(c, out var m)) return m;
             m = NewMat(c); _mats[c] = m; return m;
+        }
+
+        readonly Dictionary<(Color, float), Material> _matsSmooth = new Dictionary<(Color, float), Material>();
+
+        /// Shared material for a colour and smoothness (used by the drawn buildings).
+        Material MatFor(Color c, float smoothness)
+        {
+            if (_matsSmooth.TryGetValue((c, smoothness), out var m)) return m;
+            m = NewMat(c); m.SetFloat("_Smoothness", smoothness);
+            _matsSmooth[(c, smoothness)] = m; return m;
         }
 
         Material NewMat(Color c)

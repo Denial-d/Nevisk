@@ -15,6 +15,7 @@ namespace Nevishk
         public SpriteRenderer plate;            // dark box behind the label; fades with it
         public float labelShowDistance = 450f;   // landmarks: label visible when camera is closer than this
         public bool hasLore;
+        public bool scaleWithDistance = true;   // false for markers that are 3D buildings
 
         Vector3 _baseScale;
         bool _hovered, _selected;
@@ -61,7 +62,8 @@ namespace Nevishk
                 // Landmark pins are small in the overview and grow as you zoom into a region
                 // (perspective does most of it; this shrinks them further when far away).
                 float grow = kind == PinKind.Landmark ? Mathf.Lerp(1f, 0.45f, Mathf.InverseLerp(180f, 900f, d)) : 1f;
-                if (kind == PinKind.Landmark) transform.localScale = Vector3.one * grow;
+                if (!scaleWithDistance) grow = 1f;
+                if (kind == PinKind.Landmark && scaleWithDistance) transform.localScale = Vector3.one * grow;
                 float s = Mathf.Clamp(d / 600f, 0.15f, 2.5f);
                 label.transform.localScale = Vector3.one * (s / grow);
             }

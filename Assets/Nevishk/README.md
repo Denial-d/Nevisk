@@ -58,6 +58,8 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 | `Resources/nevishk_basemap.png` | The hand-drawn district map from the board (source for the terrain) |
 | `Resources/nevishk_terrain.bytes` | 3D terrain: heights and water levels on a 640×291 grid |
 | `Resources/nevishk_albedo.png` | Ground colours for the terrain, keeping the map's ink lines |
+| `Resources/nevishk_models.json` | The buildings drawn on the map: type, position, footprint, linked lore entry |
+| `Scripts/NevishkBuildings.cs` | Low-poly 3D versions of the drawn buildings (factories, manor, chapel, …) |
 | `Scripts/NevishkTerrain.cs` | Builds the terrain slab, river water and side walls; height lookup for everything placed on it |
 | `Resources/Fonts` | PT Sans, PT Serif, Playfair Display (all Cyrillic, SIL Open Font License; licences included) |
 | `Plugins/WebGL/NevishkBrowser.jslib` | Deep links and reduced-motion detection in the browser |
@@ -65,7 +67,7 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 | `Scripts/MapCameraController.cs` | Orbit, pan and zoom camera with touch support |
 | `Scripts/LorePanelUI.cs` | Runtime UI: district bar, tooltip, reading panel, archive |
 | `Scripts/Editor/NevishkSetup.cs` | The Nevishk menu: scene setup, web settings, web build |
-| `Tools/nevishk/*.py` | Scripts that generated the data. Re-run `build_terrain.py` after changing the base map. |
+| `Tools/nevishk/*.py` | Scripts that generated the data. After changing the base map: run `build_models.py` (cleans the map, places buildings), then `build_terrain.py Tools/nevishk/basemap_clean.png …`. |
 
 ## Editing lore
 
