@@ -51,9 +51,12 @@ namespace Nevishk
                     alpha = (_hovered || _selected) ? 1f : Mathf.InverseLerp(labelShowDistance, labelShowDistance * 0.7f, d);
                 label.alpha = Mathf.Lerp(label.alpha, alpha, 1f - Mathf.Exp(-10f * Time.unscaledDeltaTime));
 
-                // Keep a roughly constant on-screen size.
+                // Landmark pins grow with distance so they stay visible from the overview;
+                // labels keep a roughly constant on-screen size either way.
+                float grow = kind == PinKind.Landmark ? Mathf.Clamp(d / 380f, 1f, 3.2f) : 1f;
+                if (kind == PinKind.Landmark) transform.localScale = Vector3.one * grow;
                 float s = Mathf.Clamp(d / 600f, 0.15f, 2.5f);
-                label.transform.localScale = Vector3.one * s;
+                label.transform.localScale = Vector3.one * (s / grow);
             }
         }
     }

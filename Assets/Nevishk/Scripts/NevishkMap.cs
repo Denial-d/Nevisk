@@ -26,11 +26,8 @@ namespace Nevishk
         public float districtLabelHeight = 70f;
 
         [Header("Look")]
-        public Color background = NevishkTheme.SceneBackground;
-        public Color fogColor = NevishkTheme.Fog;
         [Tooltip("Vignette, desaturated grade and film grain for the weird-fiction mood.")]
         public bool atmosphere = true;
-        public Color concrete = new Color(0.78f, 0.77f, 0.74f);
 
         LoreDatabase _db;
         LorePanelUI _ui;
@@ -163,7 +160,7 @@ namespace Nevishk
         void ResetView()
         {
             if (_ui != null) _ui.Close();
-            _cam.ResetView(Vector3.zero, mapWidth * 0.85f);
+            _cam.ResetView(new Vector3(0f, 0f, -_mapDepth * 0.04f), mapWidth * 0.8f);
         }
 
         void SetSelected(MapPin pin)
@@ -232,28 +229,29 @@ namespace Nevishk
         void SetUpAtmosphere()
         {
             _camera.clearFlags = CameraClearFlags.SolidColor;
-            _camera.backgroundColor = background;
+            _camera.backgroundColor = NevishkTheme.SceneBackground;
             _camera.fieldOfView = 40f;
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = fogColor;
-            RenderSettings.fogStartDistance = mapWidth * 0.6f;
-            RenderSettings.fogEndDistance = mapWidth * 2.2f;
+            RenderSettings.fogColor = NevishkTheme.Fog;
+            RenderSettings.fogStartDistance = mapWidth * 0.9f;
+            RenderSettings.fogEndDistance = mapWidth * 2.6f;
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.62f, 0.66f, 0.74f);
-            RenderSettings.ambientEquatorColor = new Color(0.45f, 0.44f, 0.42f);
-            RenderSettings.ambientGroundColor = new Color(0.22f, 0.20f, 0.18f);
+            RenderSettings.ambientSkyColor = new Color(0.42f, 0.44f, 0.50f);
+            RenderSettings.ambientEquatorColor = new Color(0.32f, 0.30f, 0.28f);
+            RenderSettings.ambientGroundColor = new Color(0.12f, 0.11f, 0.10f);
 
-            if (FindAnyObjectByType<Light>() == null)
-            {
-                var sun = new GameObject("Sun").AddComponent<Light>();
-                sun.type = LightType.Directional;
-                sun.color = new Color(1f, 0.93f, 0.82f);
-                sun.intensity = 1.6f;
-                sun.shadows = LightShadows.Soft;
-                sun.transform.rotation = Quaternion.Euler(42f, -35f, 0f);
-            }
+            // Use the scene's directional light if it has one (the URP template does), otherwise make one.
+            // (Runs before any other lights are created, so the only light present is the scene's own.)
+            Light sun = RenderSettings.sun != null ? RenderSettings.sun : FindAnyObjectByType<Light>();
+            if (sun != null && sun.type != LightType.Directional) sun = null;
+            if (sun == null) { sun = new GameObject("Sun").AddComponent<Light>(); sun.type = LightType.Directional; }
+            sun.color = NevishkTheme.SunColor;
+            sun.intensity = NevishkTheme.SunIntensity;
+            sun.shadows = LightShadows.Soft;
+            sun.shadowStrength = 0.85f;
+            sun.transform.rotation = Quaternion.Euler(NevishkTheme.SunAngles);
         }
 
         void SetUpPostProcessing(bool reducedMotion)
@@ -292,7 +290,7 @@ namespace Nevishk
             var tex = Resources.Load<Texture2D>(_db.city.mapImage);
             Material mat = groundMaterial != null ? new Material(groundMaterial) : NewMat(Color.white);
             if (tex != null) { mat.SetTexture("_BaseMap", tex); mat.mainTexture = tex; }
-            mat.SetColor("_BaseColor", new Color(0.86f, 0.84f, 0.79f));
+            mat.SetColor("_BaseColor", NevishkTheme.GroundTint);
             mat.SetFloat("_Smoothness", 0.05f);
             ground.GetComponent<Renderer>().sharedMaterial = mat;
             Destroy(ground.GetComponent<Collider>());
@@ -304,7 +302,7 @@ namespace Nevishk
             apron.transform.localPosition = new Vector3(0, -0.5f, 0);
             apron.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             apron.transform.localScale = new Vector3(mapWidth * 6f, mapWidth * 6f, 1f);
-            var am = NewMat(new Color(0.56f, 0.55f, 0.50f));
+            var am = NewMat(NevishkTheme.Surroundings);
             am.SetFloat("_Smoothness", 0f);
             apron.GetComponent<Renderer>().sharedMaterial = am;
             Destroy(apron.GetComponent<Collider>());
@@ -321,8 +319,9 @@ namespace Nevishk
             foreach (var kv in blocks)
             {
                 var district = _db.District(kv.Key);
+                Color concrete = NevishkTheme.Concrete;
                 Color tint = district != null ? LoreDatabase.ParseColor(district.color, concrete) : concrete;
-                Color col = Color.Lerp(concrete, tint, 0.28f);
+                Color col = Color.Lerp(concrete, tint, NevishkTheme.DistrictTint);
                 var combine = new List<CombineInstance>();
                 foreach (var o in (List<object>)kv.Value)
                 {
@@ -406,7 +405,7 @@ namespace Nevishk
                 pin.kind = PinKind.District; pin.id = d.id; pin.hasLore = !string.IsNullOrEmpty(d.text);
                 var col = go.AddComponent<SphereCollider>(); col.radius = 22f;
                 pin.label = MakeLabel(go.transform, $"<size=55%><color=#{ColorUtility.ToHtmlStringRGB(LoreDatabase.ParseColor(d.color, Color.white))}>{d.number}</color></size>\n{d.name.ToUpperInvariant()}",
-                                      64f, Color.white, true);
+                                      150f, NevishkTheme.Text, true);
                 _pins[d.id] = pin;
             }
 
@@ -432,7 +431,7 @@ namespace Nevishk
                 var col = go.AddComponent<SphereCollider>();
                 col.center = Vector3.up * h; col.radius = 7f;
 
-                pin.label = MakeLabel(go.transform, l.name, 34f, NevishkTheme.Text, false);
+                pin.label = MakeLabel(go.transform, l.name, 56f, NevishkTheme.Text, false);
                 pin.label.transform.localPosition = Vector3.up * (h + 9f);
                 pin.label.alpha = 0f;
                 _pins[l.id] = pin;
@@ -452,8 +451,8 @@ namespace Nevishk
             t.text = text; t.fontSize = size; t.color = color;
             t.alignment = TextAlignmentOptions.Center;
             t.textWrappingMode = TextWrappingModes.NoWrap;
-            t.outlineWidth = 0.24f; t.outlineColor = NevishkTheme.LabelOutline;
-            t.rectTransform.sizeDelta = new Vector2(200, 40);
+            t.outlineWidth = bold ? 0.3f : 0.26f; t.outlineColor = NevishkTheme.LabelOutline;
+            t.rectTransform.sizeDelta = new Vector2(bold ? 600 : 300, bold ? 160 : 60);
             return t;
         }
 
