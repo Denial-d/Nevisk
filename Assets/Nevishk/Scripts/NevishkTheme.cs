@@ -25,8 +25,15 @@ namespace Nevishk
         public static readonly Color Stamp        = Hex("#E0533F");        // archive stamps, "закрыто"
 
         // 3D scene
-        public static readonly Color SceneBackground = Hex("#1A1916");
-        public static readonly Color Fog             = Hex("#77746C");
+        public static readonly Color SceneBackground = Hex("#141310");
+        public static readonly Color Fog             = Hex("#2A2823");   // edges fall into dusk, not grey haze
+        public static readonly Color GroundTint      = Hex("#A89F8C");   // multiplies the paper-white base map
+        public static readonly Color Surroundings    = Hex("#201E1A");
+        public static readonly Color Concrete        = Hex("#B5AFA4");
+        public const float DistrictTint = 0.16f;                         // how much district colour reaches buildings
+        public static readonly Color SunColor        = Hex("#FFE1BC");
+        public const float SunIntensity = 1.25f;
+        public static readonly Vector3 SunAngles     = new Vector3(32f, -40f, 0f); // low sun → long shadows
         public static readonly Color LabelOutline    = Hex("#0B0A07", 0.9f);
 
         // ---- type scale (reference resolution 1600×900; uGUI scales it)
