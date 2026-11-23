@@ -41,7 +41,43 @@ namespace Nevishk
         public static bool SecondaryDown => Mouse.current != null &&
             (Mouse.current.rightButton.wasPressedThisFrame || Mouse.current.middleButton.wasPressedThisFrame);
 
-        public static float Scroll => Mouse.current != null ? Mouse.current.scroll.ReadValue().y / 120f : 0f;
+        // Input System 1.8+ reports about ±1 per wheel notch; older versions (and some platforms) report ±120.
+        public static float Scroll
+        {
+            get
+            {
+                if (Mouse.current == null) return 0f;
+                float y = Mouse.current.scroll.ReadValue().y;
+                return Mathf.Abs(y) >= 20f ? y / 120f : y;
+            }
+        }
+
+        /// Keyboard camera controls: x = right, y = forward (WASD / arrows), rotate (Q/E), zoom (R/F, +/-).
+        public static Vector2 KeyPan
+        {
+            get
+            {
+                var k = Keyboard.current; if (k == null) return Vector2.zero;
+                float x = (k.dKey.isPressed || k.rightArrowKey.isPressed ? 1 : 0) - (k.aKey.isPressed || k.leftArrowKey.isPressed ? 1 : 0);
+                float y = (k.wKey.isPressed || k.upArrowKey.isPressed ? 1 : 0) - (k.sKey.isPressed || k.downArrowKey.isPressed ? 1 : 0);
+                return new Vector2(x, y);
+            }
+        }
+        public static float KeyRotate { get { var k = Keyboard.current; return k == null ? 0 : (k.eKey.isPressed ? 1 : 0) - (k.qKey.isPressed ? 1 : 0); } }
+        public static float KeyZoom
+        {
+            get
+            {
+                var k = Keyboard.current; if (k == null) return 0;
+                return (k.rKey.isPressed || k.equalsKey.isPressed || k.numpadPlusKey.isPressed ? 1 : 0)
+                     - (k.fKey.isPressed || k.minusKey.isPressed || k.numpadMinusKey.isPressed ? 1 : 0);
+            }
+        }
+        /// True while the user is typing in a UI text field (so WASD don't move the camera).
+        public static bool TypingInUI =>
+            UnityEngine.EventSystems.EventSystem.current != null &&
+            UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject != null &&
+            UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject.GetComponent<TMPro.TMP_InputField>() != null;
         public static bool ShiftHeld => Keyboard.current != null && Keyboard.current.shiftKey.isPressed;
         public static bool EscapeDown => Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame;
 #else
@@ -54,6 +90,13 @@ namespace Nevishk
         public static bool SecondaryHeld => Input.GetMouseButton(1) || Input.GetMouseButton(2);
         public static bool SecondaryDown => Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2);
         public static float Scroll => Input.mouseScrollDelta.y;
+        public static Vector2 KeyPan => new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
+        public static float KeyRotate => (Input.GetKey(KeyCode.E) ? 1 : 0) - (Input.GetKey(KeyCode.Q) ? 1 : 0);
+        public static float KeyZoom => (Input.GetKey(KeyCode.R) ? 1 : 0) - (Input.GetKey(KeyCode.F) ? 1 : 0);
+        public static bool TypingInUI =>
+            UnityEngine.EventSystems.EventSystem.current != null &&
+            UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject != null &&
+            UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject.GetComponent<TMPro.TMP_InputField>() != null;
         public static bool ShiftHeld => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
         public static bool EscapeDown => Input.GetKeyDown(KeyCode.Escape);
 #endif

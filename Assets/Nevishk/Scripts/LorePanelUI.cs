@@ -454,7 +454,15 @@ namespace Nevishk
             arch.anchorMin = arch.anchorMax = arch.pivot = new Vector2(0, 1);
             arch.anchoredPosition = new Vector2(T.S3 + 220 + T.S1 + reset.sizeDelta.x + T.S1, y);
 
-            header.sizeDelta = new Vector2(Mathf.Max(460, arch.anchoredPosition.x + arch.sizeDelta.x + T.S3), -y + T.TouchTarget + T.S2);
+            // Controls hint (touch users get the gestures; the rest is in the README).
+            float hy = y - T.TouchTarget - T.S1;
+            string hint = Application.isMobilePlatform
+                ? "Палец — двигать · два пальца — масштаб и поворот"
+                : "Тянуть — двигать · колесо — масштаб · ПКМ — поворот · WASD";
+            var hintText = NewText("Hint", header, hint, NevishkFonts.UI, 13, T.TextMuted);
+            Pin(hintText.rectTransform, T.S3, hy, 20, T.S3);
+
+            header.sizeDelta = new Vector2(Mathf.Max(460, arch.anchoredPosition.x + arch.sizeDelta.x + T.S3), -hy + 20 + T.S2);
         }
 
         TMP_InputField BuildSearchField(Transform parent)

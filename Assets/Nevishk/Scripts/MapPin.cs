@@ -58,9 +58,9 @@ namespace Nevishk
                     plate.enabled = label.alpha > 0.01f;
                 }
 
-                // Landmark pins grow with distance so they stay visible from the overview;
-                // labels keep a roughly constant on-screen size either way.
-                float grow = kind == PinKind.Landmark ? Mathf.Clamp(d / 420f, 1f, 2.2f) : 1f;
+                // Landmark pins are small in the overview and grow as you zoom into a region
+                // (perspective does most of it; this shrinks them further when far away).
+                float grow = kind == PinKind.Landmark ? Mathf.Lerp(1f, 0.45f, Mathf.InverseLerp(180f, 900f, d)) : 1f;
                 if (kind == PinKind.Landmark) transform.localScale = Vector3.one * grow;
                 float s = Mathf.Clamp(d / 600f, 0.15f, 2.5f);
                 label.transform.localScale = Vector3.one * (s / grow);

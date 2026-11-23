@@ -95,6 +95,7 @@ namespace Nevishk
             {
                 _pressStartedOverUI = PointerOverUI();
                 _lastPointer = p; _pressPos = p; _dragged = false;
+                if (_pressStartedOverUI) ReportBlockingUI(p);
             }
 
             bool primary = MapInput.PrimaryHeld, secondary = MapInput.SecondaryHeld;
@@ -112,6 +113,40 @@ namespace Nevishk
             float scroll = MapInput.Scroll;
             if (Mathf.Abs(scroll) > 0.01f && !PointerOverUI())
                 ZoomAt(p, Mathf.Pow(1f - zoomSpeed, Mathf.Clamp(scroll, -3f, 3f)));
+
+            HandleKeys();
+        }
+
+        void HandleKeys()
+        {
+            if (MapInput.TypingInUI) return;
+            float dt = Time.unscaledDeltaTime;
+            Vector2 pan = MapInput.KeyPan;
+            if (pan.sqrMagnitude > 0f)
+            {
+                // Move about 60% of the visible width per second, whatever the zoom.
+                float speed = distance * 0.6f;
+                Quaternion yawRot = Quaternion.Euler(0f, yaw, 0f);
+                _focusT += (yawRot * Vector3.right * pan.x + yawRot * Vector3.forward * pan.y) * speed * dt;
+            }
+            _yawT += MapInput.KeyRotate * 90f * dt;
+            float z = MapInput.KeyZoom;
+            if (z != 0f) ZoomAt(new Vector2(Screen.width * 0.5f, Screen.height * 0.5f), Mathf.Pow(1f - zoomSpeed, z * dt * 8f));
+        }
+
+        bool _reportedBlock;
+
+        /// One-time Console note naming the UI that swallowed a click, to diagnose "the map won't drag".
+        void ReportBlockingUI(Vector2 screenPos)
+        {
+            if (_reportedBlock || EventSystem.current == null) return;
+            _reportedBlock = true;
+            var data = new PointerEventData(EventSystem.current) { position = screenPos };
+            var hits = new System.Collections.Generic.List<RaycastResult>();
+            EventSystem.current.RaycastAll(data, hits);
+            var names = new System.Text.StringBuilder();
+            foreach (var h in hits) names.Append(h.gameObject.name).Append(" (").Append(h.module != null ? h.module.GetType().Name : "?").Append("); ");
+            Debug.Log($"[Nevishk] A drag started over UI and was ignored by the camera. Under the cursor: {(hits.Count > 0 ? names.ToString() : "nothing reported by raycasters")}");
         }
 
         void HandleTouch()

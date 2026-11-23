@@ -494,7 +494,7 @@ namespace Nevishk
                 pin.head = head.transform;
 
                 var col = go.AddComponent<SphereCollider>();
-                col.center = Vector3.up * h; col.radius = 7f;
+                col.center = Vector3.up * h; col.radius = 9f;   // generous hit area: pins are small from afar
 
                 pin.label = MakeLabel(go.transform, l.name, 40f, NevishkTheme.Text, false);
                 pin.label.transform.localPosition = Vector3.up * (h + 9f);
