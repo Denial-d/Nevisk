@@ -238,7 +238,7 @@ namespace Nevishk
             RenderSettings.ambientEquatorColor = new Color(0.45f, 0.44f, 0.42f);
             RenderSettings.ambientGroundColor = new Color(0.22f, 0.20f, 0.18f);
 
-            if (FindFirstObjectByType<Light>() == null)
+            if (FindAnyObjectByType<Light>() == null)
             {
                 var sun = new GameObject("Sun").AddComponent<Light>();
                 sun.type = LightType.Directional;
