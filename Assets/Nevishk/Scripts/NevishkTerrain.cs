@@ -17,10 +17,12 @@ namespace Nevishk
         public int GridH { get; private set; }
         public float Width { get; }
         public float Depth { get; }
-        public float BaseY = -80f;     // bottom of the diorama slab
+        public float BaseY = -80f;     // bottom of the side walls (hidden: the edges already sink into the dark)
 
-        float[] _h;      // heights, row 0 = top (north) of the map
+        float[] _h;      // heights, row 0 = north
         float[] _water;  // water level, NaN where dry
+        // World extent covered by the grid. It reaches past the drawn map so the edges can fade out.
+        float _minX, _maxX, _minZ, _maxZ;
 
         public NevishkTerrain(float width, float depth)
         {
@@ -32,14 +34,25 @@ namespace Nevishk
             var asset = Resources.Load<TextAsset>(resource);
             if (asset == null) { Debug.LogWarning("[Nevishk] Terrain data missing: Resources/" + resource); return false; }
             var b = asset.bytes;
-            if (b.Length < 12 || b[0] != 'N' || b[1] != 'V' || b[2] != 'T' || b[3] != 'R')
+            if (b.Length < 12 || b[0] != 'N' || b[1] != 'V' || b[2] != 'T')
             {
                 Debug.LogError("[Nevishk] nevishk_terrain.bytes has an unexpected format.");
                 return false;
             }
             GridW = BitConverter.ToInt32(b, 4);
             GridH = BitConverter.ToInt32(b, 8);
-            int n = GridW * GridH, o = 12;
+            int o = 12;
+            if (b[3] == '2')
+            {
+                _minX = BitConverter.ToSingle(b, 12); _maxX = BitConverter.ToSingle(b, 16);
+                _minZ = BitConverter.ToSingle(b, 20); _maxZ = BitConverter.ToSingle(b, 24);
+                o = 28;
+            }
+            else
+            {
+                _minX = -Width / 2; _maxX = Width / 2; _minZ = -Depth / 2; _maxZ = Depth / 2;
+            }
+            int n = GridW * GridH;
             _h = new float[n]; _water = new float[n];
             for (int i = 0; i < n; i++) _h[i] = BitConverter.ToInt16(b, o + i * 2) / 10f;
             o += n * 2;
@@ -54,14 +67,23 @@ namespace Nevishk
         // ------------------------------------------------------------------ sampling
 
         /// Ground height at a map UV (0..1, origin top-left, like the lore data).
-        public float HeightAtUV(float u, float v) => Sample(_h, u, v);
+        public float HeightAtUV(float u, float v) { ToGrid(u, v, out float gu, out float gv); return Sample(_h, gu, gv); }
 
         /// Water surface at a UV, or NaN where there is no water.
         public float WaterAtUV(float u, float v)
         {
-            int i = Mathf.Clamp(Mathf.RoundToInt(u * (GridW - 1)), 0, GridW - 1);
-            int j = Mathf.Clamp(Mathf.RoundToInt(v * (GridH - 1)), 0, GridH - 1);
+            ToGrid(u, v, out float gu, out float gv);
+            int i = Mathf.Clamp(Mathf.RoundToInt(gu * (GridW - 1)), 0, GridW - 1);
+            int j = Mathf.Clamp(Mathf.RoundToInt(gv * (GridH - 1)), 0, GridH - 1);
             return _water[j * GridW + i];
+        }
+
+        /// Map UV (0..1 over the drawn map, origin top-left) → grid UV (0..1 over the whole terrain).
+        void ToGrid(float u, float v, out float gu, out float gv)
+        {
+            float x = (u - 0.5f) * Width, z = (0.5f - v) * Depth;
+            gu = (x - _minX) / (_maxX - _minX);
+            gv = (_maxZ - z) / (_maxZ - _minZ);
         }
 
         /// Top surface (water if present, else ground).
@@ -73,6 +95,9 @@ namespace Nevishk
 
         public float HeightAtWorld(Vector3 p) => HeightAtUV(p.x / Width + 0.5f, 0.5f - p.z / Depth);
 
+        /// The terrain's full extent in world space (larger than the drawn map).
+        public Rect WorldRect => Rect.MinMaxRect(_minX, _minZ, _maxX, _maxZ);
+
         float Sample(float[] a, float u, float v)
         {
             float x = Mathf.Clamp01(u) * (GridW - 1), y = Mathf.Clamp01(v) * (GridH - 1);
@@ -83,12 +108,13 @@ namespace Nevishk
             return Mathf.Lerp(Mathf.Lerp(h00, h10, fx), Mathf.Lerp(h01, h11, fx), fy);
         }
 
-        Vector3 Vertex(int i, int j) =>
-            new Vector3((i / (float)(GridW - 1) - 0.5f) * Width, _h[j * GridW + i], (0.5f - j / (float)(GridH - 1)) * Depth);
+        float X(int i) => Mathf.Lerp(_minX, _maxX, i / (float)(GridW - 1));
+        float Z(int j) => Mathf.Lerp(_maxZ, _minZ, j / (float)(GridH - 1));
+        Vector3 Vertex(int i, int j) => new Vector3(X(i), _h[j * GridW + i], Z(j));
 
         Vector3 Normal(int i, int j)
         {
-            float cx = Width / (GridW - 1), cz = Depth / (GridH - 1);
+            float cx = (_maxX - _minX) / (GridW - 1), cz = (_maxZ - _minZ) / (GridH - 1);
             float hl = _h[j * GridW + Mathf.Max(i - 1, 0)], hr = _h[j * GridW + Mathf.Min(i + 1, GridW - 1)];
             float hu = _h[Mathf.Max(j - 1, 0) * GridW + i], hd = _h[Mathf.Min(j + 1, GridH - 1) * GridW + i];
             float dhdx = (hr - hl) / (2f * cx);
@@ -164,7 +190,7 @@ namespace Nevishk
         public Mesh BuildWater()
         {
             var v = new List<Vector3>(); var tri = new List<int>();
-            float cx = Width / (GridW - 1), cz = Depth / (GridH - 1);
+            float cx = (_maxX - _minX) / (GridW - 1), cz = (_maxZ - _minZ) / (GridH - 1);
             for (int j = 0; j < GridH - 1; j++)
             for (int i = 0; i < GridW - 1; i++)
             {
@@ -177,8 +203,8 @@ namespace Nevishk
                 if (wet == 0) continue;
                 lvl /= wet;
                 // Grow each quad slightly so neighbours overlap and leave no cracks.
-                float x0 = (i / (float)(GridW - 1) - 0.5f) * Width - 0.3f, x1 = x0 + cx + 0.6f;
-                float z0 = (0.5f - j / (float)(GridH - 1)) * Depth + 0.3f, z1 = z0 - cz - 0.6f;
+                float x0 = X(i) - 0.3f, x1 = x0 + cx + 0.6f;
+                float z0 = Z(j) + 0.3f, z1 = z0 - cz - 0.6f;
                 int k = v.Count;
                 v.Add(new Vector3(x0, lvl, z0)); v.Add(new Vector3(x1, lvl, z0));
                 v.Add(new Vector3(x0, lvl, z1)); v.Add(new Vector3(x1, lvl, z1));

@@ -244,8 +244,8 @@ namespace Nevishk
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = NevishkTheme.Fog;
-            RenderSettings.fogStartDistance = mapWidth * 0.9f;
-            RenderSettings.fogEndDistance = mapWidth * 2.6f;
+            RenderSettings.fogStartDistance = mapWidth * 0.75f;
+            RenderSettings.fogEndDistance = mapWidth * 2.1f;
             RenderSettings.ambientMode = AmbientMode.Trilight;
             RenderSettings.ambientSkyColor = new Color(0.42f, 0.44f, 0.50f);
             RenderSettings.ambientEquatorColor = new Color(0.32f, 0.30f, 0.28f);
@@ -335,20 +335,22 @@ namespace Nevishk
             foreach (var mesh in _terrain.BuildGroundTiles())
                 AddMesh(parent, mesh.name, mesh, ground);
 
-            AddMesh(parent, "Slab Sides", _terrain.BuildSkirt(), NewMat(NevishkTheme.SlabSide));
+            // No side walls: the countryside sinks into the dark at the edges instead.
 
             var water = NewMat(NevishkTheme.Water);
             water.SetFloat("_Smoothness", 0.9f);
             AddMesh(parent, "Мырла", _terrain.BuildWater(), water);
 
-            // Dark floor under the slab to catch its shadow.
+            // Dark ground far below, the same colour as the sky, so the sunken edges disappear into it.
             var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
             floor.name = "Floor";
             floor.transform.SetParent(_root, false);
-            floor.transform.localPosition = new Vector3(0, _terrain.BaseY - 0.5f, 0);
+            floor.transform.localPosition = new Vector3(0, -46f, 0);
             floor.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             floor.transform.localScale = new Vector3(mapWidth * 8f, mapWidth * 8f, 1f);
-            floor.GetComponent<Renderer>().sharedMaterial = NewMat(NevishkTheme.Surroundings);
+            var floorMat = NewMat(NevishkTheme.SceneBackground);
+            floorMat.SetFloat("_Smoothness", 0f);
+            floor.GetComponent<Renderer>().sharedMaterial = floorMat;
             Destroy(floor.GetComponent<Collider>());
 
             _cam.groundHeight = p => _terrain.HeightAtWorld(p);
@@ -466,8 +468,9 @@ namespace Nevishk
                 var pin = go.AddComponent<MapPin>();
                 pin.kind = PinKind.District; pin.id = d.id; pin.hasLore = !string.IsNullOrEmpty(d.text);
                 var col = go.AddComponent<SphereCollider>(); col.radius = 22f;
-                pin.label = MakeLabel(go.transform, $"<size=55%><color=#{ColorUtility.ToHtmlStringRGB(LoreDatabase.ParseColor(d.color, Color.white))}>{d.number}</color></size>\n{d.name.ToUpperInvariant()}",
-                                      150f, NevishkTheme.Text, true);
+                pin.label = MakeLabel(go.transform, $"<color=#{ColorUtility.ToHtmlStringRGB(LoreDatabase.ParseColor(d.color, Color.white))}>{d.number}</color>  {d.name.ToUpperInvariant()}",
+                                      72f, NevishkTheme.Text, true);
+                pin.plate = MakePlate(pin.label, 6f, 3.2f);
                 _pins[d.id] = pin;
             }
 
@@ -493,9 +496,10 @@ namespace Nevishk
                 var col = go.AddComponent<SphereCollider>();
                 col.center = Vector3.up * h; col.radius = 7f;
 
-                pin.label = MakeLabel(go.transform, l.name, 56f, NevishkTheme.Text, false);
+                pin.label = MakeLabel(go.transform, l.name, 40f, NevishkTheme.Text, false);
                 pin.label.transform.localPosition = Vector3.up * (h + 9f);
                 pin.label.alpha = 0f;
+                pin.plate = MakePlate(pin.label, 3f, 1.6f);
                 _pins[l.id] = pin;
             }
         }
@@ -513,9 +517,48 @@ namespace Nevishk
             t.text = text; t.fontSize = size; t.color = color;
             t.alignment = TextAlignmentOptions.Center;
             t.textWrappingMode = TextWrappingModes.NoWrap;
-            t.outlineWidth = bold ? 0.3f : 0.26f; t.outlineColor = NevishkTheme.LabelOutline;
+            t.outlineWidth = 0.12f; t.outlineColor = NevishkTheme.LabelOutline;   // light outline: the plate does the work
+            if (bold) t.characterSpacing = 8f;
             t.rectTransform.sizeDelta = new Vector2(bold ? 600 : 300, bold ? 160 : 60);
+            t.GetComponent<MeshRenderer>().sortingOrder = 2;
             return t;
+        }
+
+        static Sprite _plateSprite;
+
+        /// Subtle dark rounded box behind a world-space label.
+        SpriteRenderer MakePlate(TextMeshPro label, float padX, float padY)
+        {
+            if (_plateSprite == null)
+            {
+                const int size = 32, radius = 10;
+                var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+                for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    // Distance outside a rounded rect → soft alpha edge.
+                    float dx = Mathf.Max(radius - x - 0.5f, x + 0.5f - (size - radius), 0f);
+                    float dy = Mathf.Max(radius - y - 0.5f, y + 0.5f - (size - radius), 0f);
+                    float a = Mathf.Clamp01(radius - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
+                    tex.SetPixel(x, y, new Color(1, 1, 1, a));
+                }
+                tex.Apply();
+                _plateSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 7f, 0,
+                                             SpriteMeshType.FullRect, new Vector4(radius, radius, radius, radius));
+            }
+            label.ForceMeshUpdate();
+            Bounds b = label.textBounds;
+            var go = new GameObject("Plate");
+            go.transform.SetParent(label.transform, false);
+            go.transform.localPosition = new Vector3(b.center.x, b.center.y, 0.6f);   // just behind the text
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = _plateSprite;
+            sr.drawMode = SpriteDrawMode.Sliced;
+            sr.size = new Vector2(b.size.x + padX * 2f, b.size.y + padY * 2f);
+            sr.color = NevishkTheme.LabelPlate;
+            sr.sortingOrder = 1;
+            sr.shadowCastingMode = ShadowCastingMode.Off;
+            return sr;
         }
 
         GameObject Prop(string name, Mesh mesh, Vector3 pos, Vector3 scale, Color color, float smooth)

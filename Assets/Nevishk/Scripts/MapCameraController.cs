@@ -18,7 +18,7 @@ namespace Nevishk
         [Range(15f, 89f)] public float pitch = 55f;
 
         [Header("Limits")]
-        public float minDistance = 40f;
+        public float minDistance = 55f;          // zoom cap: closest the camera gets
         public float maxDistance = 1400f;
         public float minPitch = 20f;
         public float maxPitch = 85f;
@@ -28,6 +28,8 @@ namespace Nevishk
         public float rotateSpeed = 0.25f;
         public float zoomSpeed = 0.15f;
         public float smoothing = 10f;
+        [Tooltip("Scroll/pinch zooms toward the point under the cursor or fingers, like an online map.")]
+        public bool zoomToCursor = true;
 
         /// <summary>True while a button/finger is held and has moved past the drag threshold.</summary>
         public bool IsDragging => _held && _dragged;
@@ -109,7 +111,7 @@ namespace Nevishk
 
             float scroll = MapInput.Scroll;
             if (Mathf.Abs(scroll) > 0.01f && !PointerOverUI())
-                _distT *= Mathf.Pow(1f - zoomSpeed, Mathf.Clamp(scroll, -3f, 3f));
+                ZoomAt(p, Mathf.Pow(1f - zoomSpeed, Mathf.Clamp(scroll, -3f, 3f)));
         }
 
         void HandleTouch()
@@ -138,7 +140,7 @@ namespace Nevishk
                 float angle = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
                 if (_lastPinchDist > 0f)
                 {
-                    _distT *= _lastPinchDist / Mathf.Max(dist, 1f);
+                    ZoomAt((a + b) * 0.5f, _lastPinchDist / Mathf.Max(dist, 1f));
                     _yawT += Mathf.DeltaAngle(_lastPinchAngle, angle);
                 }
                 _lastPinchDist = dist; _lastPinchAngle = angle;
@@ -146,6 +148,54 @@ namespace Nevishk
                 _lastPointer = (a + b) * 0.5f;
             }
             if (n < 2) _lastPinchDist = 0f;
+        }
+
+        /// Zoom by factor (&lt;1 = in), keeping the ground point under screenPos fixed on screen.
+        void ZoomAt(Vector2 screenPos, float factor)
+        {
+            float newDist = Mathf.Clamp(_distT * factor, minDistance, maxDistance);
+            float k = newDist / _distT;
+            if (Mathf.Abs(k - 1f) < 1e-4f) return;            // already at the cap
+            if (zoomToCursor && TryGroundPoint(screenPos, out var hit))
+            {
+                Vector3 off = _focusT - hit;
+                _focusT.x = hit.x + off.x * k;
+                _focusT.z = hit.z + off.z * k;
+                _focusT.y = Mathf.Lerp(hit.y, _focusT.y, k);
+            }
+            _distT = newDist;
+        }
+
+        /// Where the ray under a screen point meets the ground (terrain if known, else the focus plane).
+        bool TryGroundPoint(Vector2 screenPos, out Vector3 point)
+        {
+            Ray ray = _cam.ScreenPointToRay(screenPos);
+            if (groundHeight != null)
+            {
+                float step = 6f, prev = 0f;
+                for (float t = step; t < _cam.farClipPlane; t += step)
+                {
+                    Vector3 q = ray.GetPoint(t);
+                    if (q.y <= groundHeight(q))
+                    {
+                        // Refine between the last two samples.
+                        float lo = prev, hi = t;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            float mid = (lo + hi) * 0.5f; Vector3 m = ray.GetPoint(mid);
+                            if (m.y <= groundHeight(m)) hi = mid; else lo = mid;
+                        }
+                        point = ray.GetPoint(hi);
+                        return true;
+                    }
+                    prev = t;
+                    if (q.y < -60f) break;
+                }
+            }
+            var plane = new Plane(Vector3.up, new Vector3(0f, _focusT.y, 0f));
+            if (plane.Raycast(ray, out float d)) { point = ray.GetPoint(d); return true; }
+            point = default;
+            return false;
         }
 
         void Pan(Vector2 screenDelta)

@@ -5,8 +5,11 @@ District outlines become raised land, the channels between them become the river
 to the east.
 
 Outputs (into Assets/Nevishk/Resources):
-  nevishk_terrain.bytes   heights + water levels on a 640x291 grid (int16, decimetres)
+  nevishk_terrain.bytes   heights + water levels (int16, decimetres) plus the world extent they cover
   nevishk_albedo.png      ground colour texture, 2048 px wide, with the map's ink lines
+
+The map is padded with PAD px of countryside on every side; that margin slopes down into the dark
+with an irregular edge, so the terrain fades out instead of ending in a cut.
 
 Usage: python build_terrain.py <basemap.png> <resources_dir> [preview.png]
 World units match the base map: 1 px = 1 unit, map is 1280 x 581.
@@ -18,11 +21,17 @@ from scipy import ndimage as ndi
 
 BASEMAP, OUTDIR = sys.argv[1], sys.argv[2]
 PREVIEW = sys.argv[3] if len(sys.argv) > 3 else None
-GRID_W, GRID_H = 640, 291
+PAD = 200                      # px of extra countryside around the drawn map
+CELL = 2.5                     # px per terrain grid cell
 rng = np.random.RandomState(7)
 
-im = np.asarray(Image.open(BASEMAP).convert('RGB')).astype(np.float32)
+src = np.asarray(Image.open(BASEMAP).convert('RGB')).astype(np.float32).copy()
+SRC_H, SRC_W, _ = src.shape
+src[:80, :170] = 255           # drop the little inset thumbnail in the top-left corner
+im = np.pad(src, ((PAD, PAD), (PAD, PAD), (0, 0)), constant_values=255)
 H, W, _ = im.shape
+GRID_W, GRID_H = int((W - 1) / CELL) + 1, int((H - 1) / CELL) + 1
+def P(x, y): return (x + PAD, y + PAD)   # base-map px → padded px
 r, g, b = im[..., 0], im[..., 1], im[..., 2]
 lum = im.mean(2) / 255.0
 
@@ -41,13 +50,13 @@ def flood(seed, passable):
 free = ~wall
 # district id -> (seed px, plateau height in units)
 DISTRICTS = {
-    'krasnyi_elektrovoi': ((960, 115), 13.0),
-    'baltag':             ((841, 277), 11.0),
-    'mednye_luzhi':       ((640, 390), 8.0),
-    'nevishk_tech':       ((300, 250), 10.0),
-    'loom_of_echoes':     ((470, 95), 16.0),
-    'novyi_tsentr':       ((700, 180), 9.0),
-    'imperial':           ((505, 240), 14.0),   # old centre on a rise
+    'krasnyi_elektrovoi': (P(960, 115), 13.0),
+    'baltag':             (P(841, 277), 11.0),
+    'mednye_luzhi':       (P(640, 390), 8.0),
+    'nevishk_tech':       (P(300, 250), 10.0),
+    'loom_of_echoes':     (P(470, 95), 16.0),
+    'novyi_tsentr':       (P(700, 180), 9.0),
+    'imperial':           (P(505, 240), 14.0),   # old centre on a rise
 }
 plateau = np.zeros((H, W), np.float32)
 land = np.zeros((H, W), bool)
@@ -58,8 +67,8 @@ for did, (seed, ph) in DISTRICTS.items():
 
 # Новые Камыши: small island whose outline isn't closed; traced by hand.
 kam = Image.new('L', (W, H), 0)
-ImageDraw.Draw(kam).polygon([(608, 84), (640, 74), (700, 68), (762, 80), (774, 100), (736, 110),
-                             (700, 124), (660, 114), (614, 108)], fill=255)
+ImageDraw.Draw(kam).polygon([P(608, 84), P(640, 74), P(700, 68), P(762, 80), P(774, 100), P(736, 110),
+                             P(700, 124), P(660, 114), P(614, 108)], fill=255)
 kam = np.asarray(kam) > 0
 plateau[kam & ~land] = 9.0
 land |= kam
@@ -67,7 +76,7 @@ land |= kam
 ravine = ndi.binary_closing(beige, iterations=4)
 ravine = ravine & ndi.binary_dilation(beige, iterations=6)   # keep only around the beige area
 ravine = ndi.binary_fill_holes(ravine)                       # drawn icons inside become ravine floor, not mesas
-park = flood((760, 470), green | blue)
+park = flood(P(760, 470), green | blue)
 park = ndi.binary_fill_holes(park)
 ponds = blue & (park | kam | ndi.binary_dilation(kam, iterations=12))
 
@@ -148,14 +157,20 @@ d_out = ndi.distance_transform_edt(exterior)
 mouths = channels & ndi.binary_dilation(exterior, iterations=2)
 d_to_mouth = ndi.distance_transform_edt(~mouths)
 inlet = smooth(d_to_mouth, 0, 40)                     # 0 at a river mouth → 1 farther out
-xs = np.linspace(0, 1, W)[None, :].repeat(H, 0)
-ys = np.linspace(0, 1, H)[:, None].repeat(W, 1)
+# Positions relative to the drawn map (0..1 inside it, beyond that in the padding).
+xs = ((np.arange(W) - PAD) / SRC_W)[None, :].repeat(H, 0)
+ys = ((np.arange(H) - PAD) / SRC_H)[:, None].repeat(W, 1)
+# Edge falloff: an irregular rim where the countryside slopes away into the dark.
+jj, ii = np.mgrid[0:H, 0:W]
+d_border = np.minimum(np.minimum(ii, W - 1 - ii), np.minimum(jj, H - 1 - jj)) + fbm(3, 45) * 35
+fall = smooth(d_border, 5, PAD * 0.9)
 hills = 9 + 26 * smooth(d_out, 0, 160) + n_hill * 9 * smooth(d_out, 10, 80)   # meets the city edge at ~bank height
 mountains = 140 * smooth(xs, 0.80, 0.97) * (0.45 + 0.55 * n_ridge) * smooth(d_out, 15, 90)
 north_hills = 26 * smooth(1 - ys, 0.75, 1.0) * (0.6 + 0.4 * n_hill) * smooth(d_out, 10, 60)
 h_ext = (hills + mountains + north_hills) * inlet + (-3.0) * (1 - inlet)
+h_ext = -45.0 + (h_ext + 45.0) * fall                 # sink toward the edges
 h[exterior] = h_ext[exterior]
-mouth = exterior & (h < 0)
+mouth = exterior & (h < 0) & (inlet < 0.999) & (fall > 0.98)   # river mouths only, not the sunken rim
 water[mouth] = 0.0
 
 h = ndi.gaussian_filter(h, 0.8)
@@ -181,10 +196,11 @@ alb = alb * tone
 # Keep the hand-drawn ink (outlines, lettering, the railway) like a printed map.
 ink_strength = np.clip((0.75 - lum) / 0.55, 0, 1)
 alb = alb * (1 - 0.78 * ink_strength[..., None])
+alb = alb * (0.08 + 0.92 * fall)[..., None]            # colour fades out with the land
 alb_img = Image.fromarray((np.clip(alb, 0, 1) * 255).astype(np.uint8)).resize((2048, int(2048 * H / W)), Image.BICUBIC)
 alb_img.save(f'{OUTDIR}/nevishk_albedo.png', optimize=True)
 
-# ---- export grid (area-average down to 640 x 291)
+# ---- export grid (area-average down to GRID_W x GRID_H)
 def down(a):
     return np.asarray(Image.fromarray(a.astype(np.float32), mode='F').resize((GRID_W, GRID_H), Image.BOX))
 
@@ -194,9 +210,13 @@ wlev = down(np.nan_to_num(water, nan=0.0)) / np.maximum(down(np.where(np.isnan(w
 wq = np.where(wmask, np.round(wlev * 10), -32768).astype('<i2')
 hq = np.clip(np.round(hg * 10), -32000, 32000).astype('<i2')
 with open(f'{OUTDIR}/nevishk_terrain.bytes', 'wb') as f:
-    f.write(b'NVTR'); f.write(struct.pack('<ii', GRID_W, GRID_H))
+    # World extent covered by the grid. World x = base-map px − SRC_W/2, world z = SRC_H/2 − base-map py.
+    min_x, max_x = -PAD - SRC_W / 2, (W - 1 - PAD) - SRC_W / 2
+    max_z, min_z = SRC_H / 2 + PAD, SRC_H / 2 - (H - 1 - PAD)
+    f.write(b'NVT2'); f.write(struct.pack('<ii', GRID_W, GRID_H))
+    f.write(struct.pack('<ffff', min_x, max_x, min_z, max_z))
     f.write(hq.tobytes()); f.write(wq.tobytes())
-print('height range %.1f .. %.1f   water cells %d / %d' % (hg.min(), hg.max(), wmask.sum(), wmask.size))
+print('grid %dx%d  height range %.1f .. %.1f   water cells %d' % (GRID_W, GRID_H, hg.min(), hg.max(), wmask.sum()))
 
 if PREVIEW:
     # Hillshade preview for checking the shapes.

@@ -12,6 +12,7 @@ namespace Nevishk
         public string id;
         public Transform head;          // the visible marker that scales on hover
         public TextMeshPro label;
+        public SpriteRenderer plate;            // dark box behind the label; fades with it
         public float labelShowDistance = 450f;   // landmarks: label visible when camera is closer than this
         public bool hasLore;
 
@@ -50,10 +51,16 @@ namespace Nevishk
                 else
                     alpha = (_hovered || _selected) ? 1f : Mathf.InverseLerp(labelShowDistance, labelShowDistance * 0.7f, d);
                 label.alpha = Mathf.Lerp(label.alpha, alpha, 1f - Mathf.Exp(-10f * Time.unscaledDeltaTime));
+                if (plate != null)
+                {
+                    var c = NevishkTheme.LabelPlate; c.a *= label.alpha;
+                    plate.color = c;
+                    plate.enabled = label.alpha > 0.01f;
+                }
 
                 // Landmark pins grow with distance so they stay visible from the overview;
                 // labels keep a roughly constant on-screen size either way.
-                float grow = kind == PinKind.Landmark ? Mathf.Clamp(d / 380f, 1f, 3.2f) : 1f;
+                float grow = kind == PinKind.Landmark ? Mathf.Clamp(d / 420f, 1f, 2.2f) : 1f;
                 if (kind == PinKind.Landmark) transform.localScale = Vector3.one * grow;
                 float s = Mathf.Clamp(d / 600f, 0.15f, 2.5f);
                 label.transform.localScale = Vector3.one * (s / grow);

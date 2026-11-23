@@ -26,7 +26,7 @@ namespace Nevishk
 
         // 3D scene
         public static readonly Color SceneBackground = Hex("#141310");
-        public static readonly Color Fog             = Hex("#2A2823");   // edges fall into dusk, not grey haze
+        public static readonly Color Fog             = Hex("#17150F");   // same as the sky, so the edges dissolve
         public static readonly Color GroundTint      = Hex("#A89F8C");   // multiplies the paper-white base map
         public static readonly Color Surroundings    = Hex("#201E1A");
         public static readonly Color Concrete        = Hex("#B5AFA4");
@@ -38,6 +38,7 @@ namespace Nevishk
         public const float SunIntensity = 1.25f;
         public static readonly Vector3 SunAngles     = new Vector3(32f, -40f, 0f); // low sun → long shadows
         public static readonly Color LabelOutline    = Hex("#0B0A07", 0.9f);
+        public static readonly Color LabelPlate      = Hex("#12110D", 0.72f);   // subtle dark box behind map labels
 
         // ---- type scale (reference resolution 1600×900; uGUI scales it)
         public const float SizeTitle   = 40f;   // Playfair Display Bold
