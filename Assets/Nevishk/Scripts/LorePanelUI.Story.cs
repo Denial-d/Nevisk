@@ -44,6 +44,7 @@ namespace Nevishk
         TextMeshProUGUI _storyHint, _cardKicker, _noticeText, _clearLabel;
         TMP_InputField _cardName, _cardNote;
         Button _noticeAction;
+        LayoutElement _noticeActionLayout;
         Action _noticeCallback;
         Coroutine _noticeHide, _clearReset;
         bool _cardMuted;   // suppresses change events while the card is being filled from code
@@ -51,28 +52,29 @@ namespace Nevishk
         public bool StoryActive => _storyOn;
         public bool CardFocused => (_cardName != null && _cardName.isFocused) || (_cardNote != null && _cardNote.isFocused);
 
+        const float Row = 34f, Gap = 6f, Swatch = 28f;
+
+        /// The story toolbar sits in the left column right under the header, in compact rows:
+        /// tools · colours · file actions · a one-line hint.
         void BuildStoryUI()
         {
-            // ---- toolbar, top centre
             _storyBar = NewRect("Story Toolbar", _canvasRect);
-            _storyBar.anchorMin = _storyBar.anchorMax = _storyBar.pivot = new Vector2(0.5f, 1f);
-            _storyBar.anchoredPosition = new Vector2(0, -T.S3);
+            _storyBar.anchorMin = _storyBar.anchorMax = _storyBar.pivot = new Vector2(0, 1);
             _storyBar.gameObject.AddComponent<Image>().color = T.Scrim;
 
-            float x = T.S2, y = -T.S2;
+            float pad = T.S2, x = pad, y = -pad, width = 0f;
             foreach (var (id, label) in StoryTools)
             {
-                var b = SmallButton(_storyBar, label, () => StoryToolChosen?.Invoke(id));
+                var b = CompactButton(_storyBar, label, () => StoryToolChosen?.Invoke(id));
                 b.anchorMin = b.anchorMax = b.pivot = new Vector2(0, 1);
                 b.anchoredPosition = new Vector2(x, y);
-                x += b.sizeDelta.x + T.S1;
+                x += b.sizeDelta.x + Gap;
                 _toolButtons[id] = b.GetComponent<Button>();
             }
-            float width = x - T.S1 + T.S2;
+            width = Mathf.Max(width, x - Gap + pad);
 
-            // Second row: colours, then file actions.
-            float y2 = y - T.TouchTarget - T.S1;
-            x = T.S2;
+            // Colours.
+            y -= Row + Gap; x = pad;
             for (int i = 0; i < StoryColours.Length; i++)
             {
                 var c = StoryColours[i];
@@ -80,16 +82,19 @@ namespace Nevishk
                 sw.transform.SetParent(_storyBar, false);
                 var r = (RectTransform)sw.transform;
                 r.anchorMin = r.anchorMax = r.pivot = new Vector2(0, 1);
-                r.anchoredPosition = new Vector2(x, y2); r.sizeDelta = new Vector2(T.TouchTarget, T.TouchTarget);
+                r.anchoredPosition = new Vector2(x, y - (Row - Swatch) / 2f); r.sizeDelta = new Vector2(Swatch, Swatch);
                 var ring = sw.GetComponent<Image>(); ring.color = new Color(1, 1, 1, 0f);
                 var btn = sw.GetComponent<Button>(); btn.targetGraphic = ring; btn.transition = Selectable.Transition.None;
                 btn.onClick.AddListener(() => StoryColourChosen?.Invoke(c));
-                var chip = NewRect("Chip", r); Fill(chip, 8, 8);
+                var chip = NewRect("Chip", r); Fill(chip, 4, 4);
                 var ci = chip.gameObject.AddComponent<Image>(); ci.color = c; ci.raycastTarget = false;
                 _swatchRings.Add(ring);
-                x += T.TouchTarget + 2;
+                x += Swatch + 4f;
             }
-            x += T.S1;
+            width = Mathf.Max(width, x - 4f + pad);
+
+            // File actions.
+            y -= Row + Gap; x = pad;
             foreach (var (label, act) in new (string, Action)[]
                      { ("Сохранить", () => StorySave?.Invoke()), ("Открыть", () => StoryOpen?.Invoke()), ("Ссылка", () => StoryShare?.Invoke()), ("Очистить", null) })
             {
@@ -97,23 +102,36 @@ namespace Nevishk
                 if (act == null)
                 {
                     // Two-step clear: first press asks, second within 4 s clears.
-                    b = SmallButton(_storyBar, label, ClearPressed);
+                    b = CompactButton(_storyBar, label, ClearPressed);
                     _clearLabel = b.GetComponentInChildren<TextMeshProUGUI>();
                 }
-                else b = SmallButton(_storyBar, label, act);
+                else b = CompactButton(_storyBar, label, act);
                 b.anchorMin = b.anchorMax = b.pivot = new Vector2(0, 1);
-                b.anchoredPosition = new Vector2(x, y2);
-                x += b.sizeDelta.x + T.S1;
+                b.anchoredPosition = new Vector2(x, y);
+                x += b.sizeDelta.x + Gap;
             }
-            width = Mathf.Max(width, x - T.S1 + T.S2);
+            width = Mathf.Max(width, x - Gap + pad);
 
-            _storyHint = NewText("Hint", _storyBar, "", NevishkFonts.UI, 14, T.TextMuted);
-            Pin(_storyHint.rectTransform, T.S2, y2 - T.TouchTarget - T.S1, 20, T.S2);
-            _storyBar.sizeDelta = new Vector2(width, -(y2 - T.TouchTarget - T.S1 - 20) + T.S2);
+            // Hint: up to two lines.
+            y -= Row + Gap;
+            _storyHint = NewText("Hint", _storyBar, "", NevishkFonts.UI, 13, T.TextMuted);
+            _storyHint.textWrappingMode = TextWrappingModes.Normal;
+            _storyHint.alignment = TextAlignmentOptions.TopLeft;
+            Pin(_storyHint.rectTransform, pad, y, 34, pad);
+
+            _storyBar.sizeDelta = new Vector2(width, -(y - 34) + pad - 4);
             _storyBar.gameObject.SetActive(false);
 
             BuildCard();
             BuildNotice();
+        }
+
+        /// Left column, under the header (and under the toolbar when it's showing).
+        float LeftColumnBelow(bool includeToolbar)
+        {
+            float bottom = _header != null ? -_header.anchoredPosition.y + _header.sizeDelta.y : 220f;
+            if (includeToolbar && _storyBar != null && _storyBar.gameObject.activeSelf) bottom += T.S1 + _storyBar.sizeDelta.y;
+            return bottom + T.S1;
         }
 
         void ClearPressed()
@@ -140,7 +158,7 @@ namespace Nevishk
         {
             _card = NewRect("Story Card", _canvasRect);
             _card.anchorMin = _card.anchorMax = _card.pivot = new Vector2(0, 1);
-            _card.sizeDelta = new Vector2(380, 268);
+            _card.sizeDelta = new Vector2(360, 250);
             _card.gameObject.AddComponent<Image>().color = T.Surface;
 
             _cardKicker = NewText("Kicker", _card, "", NevishkFonts.UIBold, T.SizeKicker, T.Accent);
@@ -206,14 +224,15 @@ namespace Nevishk
             _notice.anchoredPosition = new Vector2(0, T.BarHeight + T.S6);
             _notice.gameObject.AddComponent<Image>().color = T.SurfaceSolid;
             var lay = _notice.gameObject.AddComponent<HorizontalLayoutGroup>();
-            lay.padding = new RectOffset(16, 8, 6, 6); lay.spacing = 12; lay.childAlignment = TextAnchor.MiddleLeft;
+            lay.padding = new RectOffset(14, 6, 5, 5); lay.spacing = 10; lay.childAlignment = TextAnchor.MiddleLeft;
             lay.childControlWidth = lay.childControlHeight = true; lay.childForceExpandWidth = lay.childForceExpandHeight = false;
             _notice.gameObject.AddComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             _notice.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            _noticeText = NewText("Text", _notice, "", NevishkFonts.UI, T.SizeUI, T.Text);
+            _noticeText = NewText("Text", _notice, "", NevishkFonts.UI, 15f, T.Text);
             _noticeText.textWrappingMode = TextWrappingModes.NoWrap;
-            var act = SmallButton(_notice, "Вернуть", () => { var cb = _noticeCallback; HideNotice(); cb?.Invoke(); });
-            act.gameObject.AddComponent<LayoutElement>().minHeight = T.TouchTarget;
+            var act = CompactButton(_notice, "Вернуть", () => { var cb = _noticeCallback; HideNotice(); cb?.Invoke(); });
+            _noticeActionLayout = act.gameObject.AddComponent<LayoutElement>();
+            _noticeActionLayout.minHeight = 34f; _noticeActionLayout.preferredWidth = act.sizeDelta.x;
             _noticeAction = act.GetComponent<Button>();
             _notice.gameObject.SetActive(false);
         }
@@ -223,6 +242,7 @@ namespace Nevishk
         public void SetStoryActive(bool on)
         {
             _storyOn = on;
+            _storyBar.anchoredPosition = new Vector2(T.S3, -LeftColumnBelow(false));
             _storyBar.gameObject.SetActive(on);
             if (_storyButton != null)
             {
@@ -260,9 +280,7 @@ namespace Nevishk
             _cardName.text = name ?? "";
             _cardNote.text = note ?? "";
             _cardMuted = false;
-            // Below the header, on the left.
-            float headerBottom = _header != null ? -_header.anchoredPosition.y + _header.sizeDelta.y : 220f;
-            _card.anchoredPosition = new Vector2(T.S3, -(headerBottom + T.S2));
+            _card.anchoredPosition = new Vector2(T.S3, -LeftColumnBelow(true));
             _card.gameObject.SetActive(true);
             if (focusName) { _cardName.Select(); _cardName.ActivateInputField(); }
         }
@@ -283,7 +301,14 @@ namespace Nevishk
             _noticeText.text = text;
             _noticeCallback = action;
             _noticeAction.gameObject.SetActive(action != null);
-            if (action != null) _noticeAction.GetComponentInChildren<TextMeshProUGUI>().text = actionLabel;
+            if (action != null)
+            {
+                // The layout group sizes children from their layout elements, so give the button its text's width.
+                var label = _noticeAction.GetComponentInChildren<TextMeshProUGUI>();
+                label.text = actionLabel;
+                label.textWrappingMode = TextWrappingModes.NoWrap;
+                _noticeActionLayout.preferredWidth = _noticeActionLayout.minWidth = label.GetPreferredValues().x + 22f;
+            }
             _notice.gameObject.SetActive(true);
             _notice.SetAsLastSibling();
             if (_noticeHide != null) StopCoroutine(_noticeHide);

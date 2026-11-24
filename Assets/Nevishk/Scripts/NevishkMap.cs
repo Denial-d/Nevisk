@@ -251,8 +251,8 @@ namespace Nevishk
 
         static float ScaleFactor()
         {
-            // Matches LorePanelUI's CanvasScaler (1600x900, match 0.5).
-            float logW = Mathf.Log(Screen.width / 1600f, 2), logH = Mathf.Log(Screen.height / 900f, 2);
+            // Matches LorePanelUI's CanvasScaler (reference resolution, match 0.5).
+            float logW = Mathf.Log(Screen.width / LorePanelUI.ReferenceWidth, 2), logH = Mathf.Log(Screen.height / LorePanelUI.ReferenceHeight, 2);
             return Mathf.Pow(2, Mathf.Lerp(logW, logH, 0.5f));
         }
 

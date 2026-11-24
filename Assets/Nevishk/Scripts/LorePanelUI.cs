@@ -28,6 +28,7 @@ namespace Nevishk
         public event Action<string, bool> EntryShown;
 
         public bool ReducedMotion { get; set; }
+        public const float ReferenceWidth = 1920f, ReferenceHeight = 1080f;
         public bool PanelOpen => _panel != null && _panel.gameObject.activeSelf;
         public bool LightboxOpen => _lightbox != null && _lightbox.gameObject.activeSelf;
 
@@ -64,7 +65,7 @@ namespace Nevishk
             canvas.sortingOrder = 10;
             var scaler = canvasGo.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1600, 900);
+            scaler.referenceResolution = new Vector2(ReferenceWidth, ReferenceHeight);   // larger reference = smaller UI
             scaler.matchWidthOrHeight = 0.5f;
             _canvasRect = (RectTransform)canvasGo.transform;
 
@@ -987,6 +988,16 @@ namespace Nevishk
         }
 
         static void StyleButton(Button b, Image img) => StyleSelectable(b, img);
+
+        /// A smaller button for dense toolbars (34 px tall, 15 px type).
+        RectTransform CompactButton(Transform parent, string label, Action onClick)
+        {
+            var r = SmallButton(parent, label, onClick);
+            var t = r.GetComponentInChildren<TextMeshProUGUI>();
+            t.fontSize = 15f;
+            r.sizeDelta = new Vector2(t.GetPreferredValues().x + 22f, 34f);
+            return r;
+        }
 
         RectTransform SmallButton(Transform parent, string label, Action onClick)
         {
