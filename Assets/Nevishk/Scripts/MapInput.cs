@@ -14,12 +14,11 @@ namespace Nevishk
     public static class MapInput
     {
 #if ENABLE_INPUT_SYSTEM
-        static bool _touchEnabled;
+        // Ask the Input System every time: Unity switches EnhancedTouch off when Play stops, and with
+        // "Enter Play Mode Options" (no domain reload) a remembered flag would wrongly say it is still on.
         static void EnsureTouch()
         {
-            if (_touchEnabled) return;
-            EnhancedTouchSupport.Enable();
-            _touchEnabled = true;
+            if (!EnhancedTouchSupport.enabled) EnhancedTouchSupport.Enable();
         }
 
         public static int TouchCount { get { EnsureTouch(); return Touch.activeTouches.Count; } }

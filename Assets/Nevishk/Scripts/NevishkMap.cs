@@ -1021,6 +1021,10 @@ namespace Nevishk
         }
 
         static readonly Dictionary<PrimitiveType, Mesh> _prim = new Dictionary<PrimitiveType, Mesh>();
+
+        // Cached meshes and the label sprite are destroyed when Play stops; start each Play clean.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() { _prim.Clear(); _plateSprite = null; }
         static Mesh PrimitiveMesh(PrimitiveType t)
         {
             if (_prim.TryGetValue(t, out var m) && m != null) return m;

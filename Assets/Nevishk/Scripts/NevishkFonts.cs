@@ -16,6 +16,15 @@ namespace Nevishk
         static TMP_FontAsset _ui, _uiBold, _reading, _readingItalic, _readingBold, _display;
         static bool _wired;
 
+        // Runtime-made font assets are destroyed when Play stops; forget them at the start of each Play
+        // (needed when Unity is set not to reload scripts on entering Play mode).
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics()
+        {
+            _ui = _uiBold = _reading = _readingItalic = _readingBold = _display = null;
+            _wired = false;
+        }
+
         public static TMP_FontAsset UI => _ui ??= Create("Fonts/PTSans-Regular") ?? TMP_Settings.defaultFontAsset;
         public static TMP_FontAsset UIBold => _uiBold ??= Create("Fonts/PTSans-Bold") ?? UI;
         public static TMP_FontAsset Display => _display ??= Create("Fonts/PlayfairDisplay-Bold") ?? UIBold;

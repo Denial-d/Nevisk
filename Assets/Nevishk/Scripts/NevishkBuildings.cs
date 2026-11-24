@@ -759,6 +759,9 @@ namespace Nevishk
         static Mesh UnitCube => _cube != null ? _cube : (_cube = Primitive(PrimitiveType.Cube));
         static Mesh UnitCylinder => _cyl != null ? _cyl : (_cyl = Primitive(PrimitiveType.Cylinder));
         static Mesh _sphere;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() { _cube = _cyl = _prism = _cone = _sphere = null; }   // rebuilt each Play
         static Mesh UnitSphere => _sphere != null ? _sphere : (_sphere = Primitive(PrimitiveType.Sphere));
 
         static Mesh Primitive(PrimitiveType t)
