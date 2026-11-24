@@ -60,6 +60,8 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 | `Resources/nevishk_albedo.png` | Ground colours for the terrain, keeping the map's ink lines |
 | `Resources/nevishk_models.json` | The buildings drawn on the map: type, position, footprint, linked lore entry |
 | `Scripts/NevishkBuildings.cs` | Low-poly 3D versions of the drawn buildings (factories, manor, chapel, …) |
+| `Resources/nevishk_rail.json` | The railway (ЖД) traced from the base map, extended into the countryside |
+| `Scripts/NevishkRailroad.cs` | Builds the railway on the terrain: grade, cuttings, embankment, bridges, viaduct, tunnels |
 | `Scripts/NevishkTerrain.cs` | Builds the terrain slab, river water and side walls; height lookup for everything placed on it |
 | `Resources/Fonts` | PT Sans, PT Serif, Playfair Display (all Cyrillic, SIL Open Font License; licences included) |
 | `Plugins/WebGL/NevishkBrowser.jslib` | Deep links and reduced-motion detection in the browser |
@@ -67,7 +69,7 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 | `Scripts/MapCameraController.cs` | Orbit, pan and zoom camera with touch support |
 | `Scripts/LorePanelUI.cs` | Runtime UI: district bar, tooltip, reading panel, archive |
 | `Scripts/Editor/NevishkSetup.cs` | The Nevishk menu: scene setup, web settings, web build |
-| `Tools/nevishk/*.py` | Scripts that generated the data. After changing the base map: run `build_models.py` (cleans the map, places buildings), then `build_terrain.py Tools/nevishk/basemap_clean.png …`. |
+| `Tools/nevishk/*.py` | Scripts that generated the data. After changing the base map: run `build_models.py` (cleans the map, places buildings), `build_rail.py … - Tools/nevishk/basemap_clean.png` (traces the railway, erases it from the clean map), then `build_terrain.py Tools/nevishk/basemap_clean.png …`. |
 
 ## Editing lore
 

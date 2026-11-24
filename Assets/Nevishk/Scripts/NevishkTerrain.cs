@@ -98,6 +98,46 @@ namespace Nevishk
         /// The terrain's full extent in world space (larger than the drawn map).
         public Rect WorldRect => Rect.MinMaxRect(_minX, _minZ, _maxX, _maxZ);
 
+        public float WaterAtWorld(Vector3 p) => WaterAtUV(p.x / Width + 0.5f, 0.5f - p.z / Depth);
+
+        /// Shape the ground to a path before the meshes are built: within halfWidth the ground is set to
+        /// the path height (minus bedDepth), blending back to the natural ground over `falloff`.
+        /// Segments whose ends are flagged in `skip` (bridges, tunnels) are left untouched.
+        public void FlattenAlong(IList<Vector3> path, IList<bool> skip, float halfWidth, float falloff, float bedDepth = 0.3f)
+        {
+            int n = GridW * GridH;
+            var best = new float[n]; var target = new float[n];
+            for (int q = 0; q < n; q++) best[q] = float.MaxValue;
+            float cx = (_maxX - _minX) / (GridW - 1), cz = (_maxZ - _minZ) / (GridH - 1);
+            float reach = halfWidth + falloff;
+            for (int k = 0; k + 1 < path.Count; k++)
+            {
+                if (skip[k] || skip[k + 1]) continue;
+                Vector3 a = path[k], b = path[k + 1];
+                int i0 = Mathf.Max(0, Mathf.FloorToInt((Mathf.Min(a.x, b.x) - reach - _minX) / cx));
+                int i1 = Mathf.Min(GridW - 1, Mathf.CeilToInt((Mathf.Max(a.x, b.x) + reach - _minX) / cx));
+                int j0 = Mathf.Max(0, Mathf.FloorToInt((_maxZ - Mathf.Max(a.z, b.z) - reach) / cz));
+                int j1 = Mathf.Min(GridH - 1, Mathf.CeilToInt((_maxZ - Mathf.Min(a.z, b.z) + reach) / cz));
+                Vector2 A = new Vector2(a.x, a.z), AB = new Vector2(b.x - a.x, b.z - a.z);
+                float len2 = Mathf.Max(AB.sqrMagnitude, 1e-6f);
+                for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    var P = new Vector2(X(i), Z(j));
+                    float t = Mathf.Clamp01(Vector2.Dot(P - A, AB) / len2);
+                    float d = Vector2.Distance(P, A + AB * t);
+                    int idx = j * GridW + i;
+                    if (d < best[idx]) { best[idx] = d; target[idx] = Mathf.Lerp(a.y, b.y, t) - bedDepth; }
+                }
+            }
+            for (int q = 0; q < n; q++)
+            {
+                if (best[q] >= reach) continue;
+                float w = best[q] <= halfWidth ? 1f : 1f - Mathf.SmoothStep(0f, 1f, (best[q] - halfWidth) / falloff);
+                _h[q] = Mathf.Lerp(_h[q], target[q], w);
+            }
+        }
+
         float Sample(float[] a, float u, float v)
         {
             float x = Mathf.Clamp01(u) * (GridW - 1), y = Mathf.Clamp01(v) * (GridH - 1);

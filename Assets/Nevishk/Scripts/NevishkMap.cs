@@ -39,6 +39,7 @@ namespace Nevishk
         MapPin _hovered, _selected;
         Transform _root;
         NevishkTerrain _terrain;
+        NevishkRailroad _rail;
 
         /// A 3D building made from an icon on the base map.
         class ModelSpot { public float u, v, rPx; public Vector3 pos; public float top, radius; public string label; }
@@ -298,7 +299,13 @@ namespace Nevishk
         void BuildGround()
         {
             _terrain = new NevishkTerrain(mapWidth, _mapDepth);
-            if (_terrain.Load()) { BuildTerrain(); return; }
+            if (_terrain.Load())
+            {
+                PlanRailroad();          // shapes the ground along the track, so it must come before the meshes
+                BuildTerrain();
+                if (_rail != null) _rail.Build(_root, MatFor, PrimitiveMesh(PrimitiveType.Cube));
+                return;
+            }
             _terrain = null;   // fall back to the flat map
 
             var ground = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -326,6 +333,19 @@ namespace Nevishk
             apron.GetComponent<Renderer>().sharedMaterial = am;
             Destroy(apron.GetComponent<Collider>());
         }
+
+        void PlanRailroad()
+        {
+            var asset = Resources.Load<TextAsset>("nevishk_rail");
+            if (asset == null) return;
+            var pts = (MiniJson.Parse(asset.text) as Dictionary<string, object>)["points"] as List<object>;
+            var uvs = new List<Vector2>(pts.Count);
+            foreach (var o in pts) { var p = (List<object>)o; uvs.Add(new Vector2(F(p[0]), F(p[1]))); }
+            _rail = NevishkRailroad.Plan(_terrain, uvs, mapWidth, _mapDepth);
+            _rail.FlattenTerrain(_terrain);
+        }
+
+        bool NearRail(Vector3 world, float margin) => _rail != null && _rail.DistanceXZ(world) < margin;
 
         void BuildTerrain()
         {
@@ -434,6 +454,7 @@ namespace Nevishk
                     var r = (List<object>)o;
                     float u = F(r[0]), v = F(r[1]), w = PxToWorld(F(r[2])), d = PxToWorld(F(r[3])), h = F(r[4]), yaw = F(r[5]);
                     if (NearModel(u, v, Mathf.Max(F(r[2]), F(r[3])) * 0.5f + 3f)) continue;   // make room for drawn buildings
+                    if (NearRail(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + NevishkRailroad.BedHalfWidth + 3f)) continue;
                     // Stand on the lowest corner so nothing floats on a slope; top stays level.
                     float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
                     float g0 = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
@@ -457,7 +478,7 @@ namespace Nevishk
             {
                 var r = (List<object>)o;
                 float s = F(r[2]), tu = F(r[0]), tv = F(r[1]);
-                if (IsWater(tu, tv) || NearModel(tu, tv, 2f)) continue;
+                if (IsWater(tu, tv) || NearModel(tu, tv, 2f) || NearRail(UvToWorld(new[] { tu, tv }), NevishkRailroad.BedHalfWidth + 4f)) continue;
                 Vector3 p = UvToWorld(new[] { tu, tv }, Ground(tu, tv) - 0.5f);
                 trees.Add(new CombineInstance
                 {
