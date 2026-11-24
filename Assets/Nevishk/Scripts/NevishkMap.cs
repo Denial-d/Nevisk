@@ -890,7 +890,11 @@ namespace Nevishk
                     var hit = go.AddComponent<SphereCollider>();
                     hit.center = Vector3.up * spot.top * 0.5f;
                     hit.radius = Mathf.Max(spot.radius, spot.top * 0.5f);
-                    pin.label = MakeLabel(go.transform, string.IsNullOrEmpty(spot.label) ? l.name : spot.label, 40f, NevishkTheme.Text, false);
+                    // Name box tinted with the place's category colour, plus a matching dot, so the legend reads on buildings.
+                    Color catCol = NevishkColors.ForCategory(_db, l.category);
+                    string name = string.IsNullOrEmpty(spot.label) ? l.name : spot.label;
+                    pin.label = MakeLabel(go.transform, $"<size=140%><color={NevishkTheme.ToHex(catCol)}>•</color></size> {name}", 40f, NevishkTheme.Text, false);
+                    pin.plateColor = TintedPlate(catCol);
                     pin.label.transform.localPosition = Vector3.up * (spot.top + 8f);
                     pin.label.alpha = 0f;
                     pin.plate = MakePlate(pin.label, 3f, 1.6f);
@@ -916,8 +920,18 @@ namespace Nevishk
                 pin.label.transform.localPosition = Vector3.up * (h + 9f);
                 pin.label.alpha = 0f;
                 pin.plate = MakePlate(pin.label, 3f, 1.6f);
+                pin.plateColor = TintedPlate(c);
                 _pins[l.id] = pin;
             }
+        }
+
+        /// Dark label box nudged toward a category colour; dark enough that the bone text keeps its contrast.
+        static Color TintedPlate(Color category)
+        {
+            Color baseCol = NevishkTheme.LabelPlate;
+            Color t = Color.Lerp(baseCol, category * 0.55f, 0.35f);
+            t.a = 0.82f;
+            return t;
         }
 
         // ------------------------------------------------------------------ helpers

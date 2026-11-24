@@ -546,6 +546,7 @@ namespace Nevishk
             string how = Application.isMobilePlatform
                 ? "Нажмите на здание — откроется история места"
                 : "Наведите на здание — его название,\nнажмите — откроется история места";
+            how = "Точка у названия — тип места.\n" + how;
             NewText("How", _legendItems, $"<i>{how}</i>", NevishkFonts.UI, 14, T.TextMuted);
             SetLegend(false);
         }

@@ -13,6 +13,7 @@ namespace Nevishk
         public Transform head;          // the visible marker that scales on hover
         public TextMeshPro label;
         public SpriteRenderer plate;            // dark box behind the label; fades with it
+        public Color plateColor = NevishkTheme.LabelPlate;   // tinted by category for buildings
         public float labelShowDistance = 450f;   // landmarks: label visible when camera is closer than this
         public bool hasLore;
         public bool scaleWithDistance = true;   // false for markers that are 3D buildings
@@ -54,7 +55,7 @@ namespace Nevishk
                 label.alpha = Mathf.Lerp(label.alpha, alpha, 1f - Mathf.Exp(-10f * Time.unscaledDeltaTime));
                 if (plate != null)
                 {
-                    var c = NevishkTheme.LabelPlate; c.a *= label.alpha;
+                    var c = plateColor; c.a *= label.alpha;
                     plate.color = c;
                     plate.enabled = label.alpha > 0.01f;
                 }
