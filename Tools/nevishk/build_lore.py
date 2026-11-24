@@ -2,8 +2,9 @@
 import json, re, html, sys
 import numpy as np
 
-SP = '/tmp/claude-0/-home-user/f16b717f-43c8-5a61-bcf6-93fe88b9c84b/scratchpad/'
+# Usage: python build_lore.py <out.json> <source dir with board.svg, clean.txt, stencils.json>
 OUT = sys.argv[1]
+SP = sys.argv[2].rstrip('/') + '/'
 
 board = open(SP + 'board.svg', encoding='utf-8').read()
 clean = open(SP + 'clean.txt', encoding='utf-8').read()
@@ -71,8 +72,9 @@ IMG_W, IMG_H = 1280, 581
 
 def stickies():
     res = []
-    for m in re.finditer(r'<rect ([^>]*data-type="sticky"[^>]*)/>', board):
-        a = dict(re.findall(r'([\w-]+)="([^"]*)"', m.group(1)))
+    # Attributes may be "double" or 'single' quoted (Miro uses single quotes when the text has a " in it).
+    for m in re.finditer(r'<rect ((?:[^>"\']|"[^"]*"|\'[^\']*\')*data-type="sticky"(?:[^>"\']|"[^"]*"|\'[^\']*\')*)/>', board):
+        a = {k: (v1 or v2) for k, v1, v2 in re.findall(r'([\w-]+)=(?:"([^"]*)"|\'([^\']*)\')', m.group(1))}
         c = re.sub('<[^>]+>', ' ', html.unescape(a.get('data-content', ''))).strip()
         c = re.sub(r'\s+', ' ', c)
         x, y, w, h = (float(a[k]) for k in ('x', 'y', 'width', 'height'))
@@ -110,6 +112,7 @@ USH = doc('3458764688807107482')
 NT = doc('3458764688807491132')
 CORPS = doc('3458764688807491538')
 KAM = doc('3458764688807780309')
+KR = doc('3458764691372171202')          # Красный электровой (added 2026-11-23)
 
 documents = [
     dict(id='doc_rassvet_journals', title='Записки из лабораторных журналов НИИ «Рассвет»',
@@ -133,6 +136,7 @@ documents = [
     dict(id='doc_balaur_log', title='Журнал дежурств: водно-спасательная станция №2', kind='archive', author='',
          text='\n\n'.join([st('3458764688763297607'), st('3458764688763132887'), st('3458764688763297850'),
                            st('3458764688763514966')])),
+    dict(id='doc_krasnyi', title='Красный электровой: история и заметки', kind='places', author='Лёха', text=KR),
     dict(id='doc_psychorealism_terms', title='Психореализм: термины', kind='glossary', author='',
          text=next(s['text'] for s in S if s['text'].startswith('Психореализм, концепция'))),
 ]
@@ -145,13 +149,14 @@ districts = [
          text=section(KAM, 'Район "Новые Камыши"').replace('Район "Новые Камыши"', '').strip(),
          docs=['doc_rassvet_journals', 'doc_chronotope']),
     dict(id='krasnyi_elektrovoi', board='2) Красный электровой', name='Красный электровой', number=2,
-         color='#C62828', owner='Лёха', status='Not Started', summary='', text='', docs=[]),
+         color='#C62828', owner='Лёха', status='In Progress', summary='Бывший Tarpo',
+         text=section(KR, 'Изначально К. Э.', 'А теперь заметки'), docs=['doc_krasnyi']),
     dict(id='baltag', board='3)Балтаг', name='Балтаг', number=3, color='#F9A825', owner='Илья',
-         status='In Progress', summary='Город блядей и воинских частей', text='', docs=[]),
+         status='Complete', summary='Город блядей и воинских частей', text='', docs=[]),
     dict(id='mednye_luzhi', board='4)Медные лужи', name='Медные лужи', number=4, color='#EF6C00',
          owner='Макс', status='In Progress', summary='Ботаника', text='', docs=[]),
     dict(id='ushchelye', board='5)Ущелье', name='Ущелье', number=5, color='#9E9E9E', owner='Настя',
-         status='In Progress', summary='Пространство под виадуком',
+         status='Complete', summary='Пространство под виадуком',
          text=section(clean[clean.find('##### [doc] id=3458764688807309939'):], 'Много лет назад', 'Со временем предприятие'),
          docs=['doc_ushchelye_places', 'doc_ushchelye_official', 'doc_ushchelye_unofficial', 'doc_sects',
                'doc_psy_threads', 'doc_psy_memory']),
@@ -218,6 +223,31 @@ LORE = {  # landmark name on board -> (display name, text, docs, district overri
     'Балаур': ('Балаур', st('3458764688757936082'), ['doc_balaur_log'], 'novyi_tsentr'),
     'Брынкуш': ('Брынкуш', '', [], 'novyi_tsentr'),
     'Старый центр': ('Старый центр', '', [], 'imperial'),
+    # Красный электровой (document added 2026-11-23)
+    'ТЭЦ-1': ('ТЭЦ-1', section(KR, 'Отвлеклись от названия', 'Красный электровой ещё со времён'),
+              ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Мост идиотов': ('Мост идиотов (мост им. Батонова)', section(KR, 'Бульвар Просвещения ведёт', 'Ещё один крупный мост'),
+                     ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Седой мост': ('Седой мост', section(KR, 'Ещё один крупный мост', 'Помимо этого'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Хромая жаба': ('«Хромая жаба»', section(KR, 'Есть в этом районе довольно примечательное', 'Когда-то в Tarpo'),
+                    ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Хутор': ('Недохутор', section(KR, 'Когда-то в Tarpo'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'БЛЯ': ('Б.Л.Я. — Большой лекторий яблоководства',
+            section(KR, 'Позже на месте основных столкновений', 'До присоединения') + '\n\n' +
+            section(KR, 'Несмотря на описанную мирность', '2. Основные'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'ЕБНУ': ('Е.Б.Н.У. — Единое бюджетное нефте-газовое училище',
+             section(KR, 'Позже на месте основных столкновений', 'До присоединения') + '\n\n' +
+             section(KR, 'Несмотря на описанную мирность', '2. Основные'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Бульвар Просвещения': ('Бульвар Просвещения',
+                            section(KR, 'Позже на месте основных столкновений', 'До присоединения') + '\n\n' +
+                            section(KR, 'Основные бульвары', 'Был такой архитектор'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Улица Робеспьера': ('Улица Максимилиана Робеспьера',
+                         section(KR, 'Позже на месте основных столкновений', 'До присоединения') + '\n\n' +
+                         section(KR, 'Несмотря на описанную мирность', '2. Основные'), ['doc_krasnyi'], 'krasnyi_elektrovoi'),
+    'Аллея: "Память"': ('Аллея «Память»', section(USH, 'Старая аллея начиналась', 'Водопад начинался'),
+                        ['doc_ushchelye_places'], 'ushchelye'),
+    'Фонтан: "забвение"': ('Фонтан «Забвение»', section(USH, 'Недалеко от старой аллеи', 'Мусор был'),
+                           ['doc_ushchelye_places'], 'ushchelye'),
 }
 
 landmarks = []
