@@ -91,6 +91,28 @@ namespace Nevishk.EditorTools
             if (report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorUtility.RevealInFinder(outDir);
         }
 
+        /// Headless web build for CI (GitHub Actions / game-ci): no dialogs, output to -customBuildPath if given,
+        /// and a non-zero exit code when the build fails so the workflow stops.
+        public static void BuildWebCI()
+        {
+            ConfigureWeb();
+            var args = System.Environment.GetCommandLineArgs();
+            string outDir = "Builds/Web";
+            for (int i = 0; i < args.Length - 1; i++)
+                if (args[i] == "-customBuildPath") outDir = args[i + 1];
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { ScenePath },
+                locationPathName = outDir,
+                target = BuildTarget.WebGL,
+                options = BuildOptions.None
+            });
+            var result = report.summary.result;
+            Debug.Log($"[Nevishk] CI web build {result}: {outDir} ({report.summary.totalSize / (1024 * 1024f):F1} MB)");
+            if (Application.isBatchMode)
+                EditorApplication.Exit(result == UnityEditor.Build.Reporting.BuildResult.Succeeded ? 0 : 1);
+        }
+
         // ---------------------------------------------------------------- helpers
 
         static Material GetOrCreateMat(string path, Shader shader)
