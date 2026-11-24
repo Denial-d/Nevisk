@@ -88,7 +88,7 @@ Shader "Nevishk/Fog"
                 float2 p = i.uv * _Scale;
                 half n1 = SAMPLE_TEXTURE2D(_NoiseTex, sampler_NoiseTex, p + _Flow.xy * (_Scale * t)).r;
                 half n2 = SAMPLE_TEXTURE2D(_NoiseTex, sampler_NoiseTex, p * 2.7 + _Flow.zw * (_Scale * t)).r;
-                half n = saturate((n1 * 0.65 + n2 * 0.35) * 1.9 - 0.5);
+                half n = saturate((n1 * 0.65 + n2 * 0.35) * 2.2 - 0.62);
 
                 // Soft where the mist meets the ground or a building.
                 float2 screenUV = GetNormalizedScreenSpaceUV(i.positionCS);
@@ -106,8 +106,9 @@ Shader "Nevishk/Fog"
                 half breathe = 0.85 + 0.15 * sin(t * 0.11 + i.uv.x * 0.0021);
 
                 half a = _Color.a * i.color.a * n * soft * nearFade * breathe;
-                half3 col = _Color.rgb * (0.82 + 0.36 * n1);
-                col = MixFog(col, i.fogFactor);
+                half3 col = _Color.rgb * (0.78 + 0.44 * n1);
+                // Only a little of the scene's distance haze: full MixFog turned the mist the colour of the dark sky.
+                col = lerp(col, MixFog(col, i.fogFactor), 0.35);
                 return half4(col, saturate(a));
             }
             ENDHLSL

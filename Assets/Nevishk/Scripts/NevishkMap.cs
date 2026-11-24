@@ -796,6 +796,7 @@ namespace Nevishk
                     var r = (List<object>)o;
                     float u = F(r[0]), v = F(r[1]), w = PxToWorld(F(r[2])), d = PxToWorld(F(r[3])), h = F(r[4]), yaw = F(r[5]);
                     if (NearModel(u, v, Mathf.Max(F(r[2]), F(r[3])) * 0.5f + 3f)) continue;   // make room for drawn buildings
+                    if (InPrimeCity(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.5f)) continue;
                     if (NearRail(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + NevishkRailroad.BedHalfWidth + 3f)) continue;
                     // Stand on the lowest corner so nothing floats on a slope; top stays level.
                     float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
@@ -845,12 +846,7 @@ namespace Nevishk
                 switch (l.name)
                 {
                     case "Невишк Prime City":
-                        // Обсидиан (black glass), Ось (cylinder), Ковчег, Скелет (unfinished)
-                        Prop("Обсидиан", cube, p + new Vector3(-9, 45, 6), new Vector3(9, 90, 9), new Color(0.05f, 0.05f, 0.07f), 0.95f);
-                        Prop("Ось", cyl, p + new Vector3(7, 37, 9), new Vector3(9, 37, 9), new Color(0.55f, 0.68f, 0.78f), 0.9f);
-                        Prop("Ковчег", cube, p + new Vector3(10, 30, -8), new Vector3(10, 60, 8), new Color(0.75f, 0.72f, 0.66f), 0.6f);
-                        Prop("Скелет", cube, p + new Vector3(-10, 25, -10), new Vector3(8, 50, 8), new Color(0.45f, 0.44f, 0.42f), 0f);
-                        Prop("Кран", cube, p + new Vector3(-10, 58, -4), new Vector3(1.2f, 1.2f, 18), new Color(0.85f, 0.6f, 0.15f), 0f);
+                        BuildPrimeCity(p, cube, cyl);
                         break;
                     case "Балаур":
                         // A rock island where the Мырла forks.
@@ -871,6 +867,67 @@ namespace Nevishk
                         break;
                 }
             }
+        }
+
+        // Невишк Prime City as in the board photo, seen from the Набережная to the south, left to right (west → east):
+        // «Обсидиан» (black glass, tallest, a spire), «Ось» (glass cylinder, revolving restaurant on top),
+        // «Ковчег» (slim residential tower, stepped crown) and the unfinished Скелет with its crane. One mall podium
+        // joins their bases ("торговый центр в основании башен").
+        const float PrimeHalfX = 46f, PrimeHalfZ = 16f;
+
+        void BuildPrimeCity(Vector3 p, Mesh cube, Mesh cyl)
+        {
+            Mesh spire = NevishkBuildings.SpireMesh;
+            float G(float dx) => _terrain != null ? _terrain.HeightAtWorld(p + new Vector3(dx, 0, 0)) : p.y;
+            float baseY = Mathf.Min(G(-40f), Mathf.Min(G(0f), G(40f))) - 0.5f;
+            Vector3 At(float dx, float y) => new Vector3(p.x + dx, baseY + y, p.z);
+
+            Prop("Сити · торговый центр", cube, At(0, 4f), new Vector3(PrimeHalfX * 2f, 8f, 26f), new Color(0.20f, 0.21f, 0.23f), 0.8f);
+
+            // «Обсидиан» — Чернильница
+            var ink = new Color(0.04f, 0.04f, 0.06f);
+            Prop("Обсидиан", cube, At(-33, 8f + 34f), new Vector3(14, 68, 14), ink, 0.95f);
+            Prop("Обсидиан · верх", cube, At(-33, 76f + 12f), new Vector3(11, 24, 11), ink, 0.95f);
+            Prop("Обсидиан · корона", cube, At(-33, 100f + 5f), new Vector3(7.5f, 10, 7.5f), ink, 0.95f);
+            Prop("Обсидиан · шпиль", spire, At(-33, 110f), new Vector3(2.2f, 22f, 2.2f), new Color(0.35f, 0.35f, 0.38f), 0.8f);
+
+            // «Ось» — glass cylinder with the revolving restaurant
+            var glass = new Color(0.36f, 0.46f, 0.52f);
+            Prop("Ось", cyl, At(-11, 8f + 40f), new Vector3(13, 40, 13), glass, 0.9f);            // cylinder mesh is 2 units tall
+            Prop("Ось · ресторан", cyl, At(-11, 88f + 2.5f), new Vector3(16.5f, 2.5f, 16.5f), new Color(0.62f, 0.60f, 0.52f), 0.7f);
+            Prop("Ось · купол", PrimitiveMesh(PrimitiveType.Sphere), At(-11, 93f), new Vector3(12f, 7f, 12f), glass, 0.9f);
+
+            // «Ковчег» — slim, tall, stepped crown and a mast
+            var pale = new Color(0.58f, 0.60f, 0.62f);
+            Prop("Ковчег", cube, At(11, 8f + 38f), new Vector3(10, 76, 10), pale, 0.75f);
+            Prop("Ковчег · ступень", cube, At(11, 84f + 4f), new Vector3(8, 8, 8), pale, 0.75f);
+            Prop("Ковчег · ступень 2", cube, At(11, 92f + 3f), new Vector3(5.5f, 6, 5.5f), pale, 0.75f);
+            Prop("Ковчег · мачта", cube, At(11, 98f + 6f), new Vector3(0.6f, 12, 0.6f), new Color(0.3f, 0.3f, 0.3f), 0f);
+
+            // Скелет — bare concrete frame: corner columns and floor slabs, crane on top
+            var concrete = new Color(0.46f, 0.45f, 0.43f);
+            const float sw = 12f, top = 8f + 66f;
+            foreach (var (cx, cz) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (0, 1) })
+                Prop("Скелет · колонна", cube, At(33 + cx * sw / 2f, (8f + top) / 2f) + new Vector3(0, 0, cz * sw / 2f),
+                     new Vector3(1.2f, top - 8f, 1.2f), concrete, 0f);
+            for (float y = 12f; y <= top; y += 5.5f)
+                Prop("Скелет · перекрытие", cube, At(33, y), new Vector3(sw + 0.6f, 0.5f, sw + 0.6f), concrete, 0f);
+            var crane = new Color(0.85f, 0.6f, 0.15f);
+            Prop("Кран · башня", cube, At(33, top + 9f), new Vector3(1.5f, 18f, 1.5f), crane, 0f);
+            Prop("Кран · стрела", cube, At(33 - 6f, top + 18f), new Vector3(26f, 1.2f, 1.2f), crane, 0f);
+            Prop("Кран · противовес", cube, At(33 + 7.5f, top + 17.5f), new Vector3(3f, 2f, 2f), new Color(0.3f, 0.3f, 0.3f), 0f);
+        }
+
+        /// The Prime City quarter is built by hand; keep generic blocks out of its footprint.
+        bool InPrimeCity(Vector3 world, float halfSize)
+        {
+            foreach (var l in _db.landmarks)
+            {
+                if (l.name != "Невишк Prime City") continue;
+                Vector3 c = OnGround(l.uv);
+                return Mathf.Abs(world.x - c.x) < PrimeHalfX + 4f + halfSize && Mathf.Abs(world.z - c.z) < PrimeHalfZ + 4f + halfSize;
+            }
+            return false;
         }
 
         void BuildPins()

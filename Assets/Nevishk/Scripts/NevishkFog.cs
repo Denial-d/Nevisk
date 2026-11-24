@@ -13,7 +13,7 @@ namespace Nevishk
     /// </summary>
     public static class NevishkFog
     {
-        public static readonly Color MistColour = new Color(0.34f, 0.36f, 0.35f);
+        public static readonly Color MistColour = new Color(0.58f, 0.61f, 0.60f);   // pale grey-green, lighter than the land so it reads as mist
 
         /// <param name="box">The drawn city (the map image's extent) in world XZ.</param>
         /// <param name="outer">How far out the countryside reaches (half extents), for the murk layers.</param>
