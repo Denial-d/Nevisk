@@ -319,7 +319,11 @@ namespace Nevishk
                 BuildCountryside();
                 // The zone: fog walls just outside the drawn city and murk over the country beyond.
                 var box = new Rect(-mapWidth / 2f, -_mapDepth / 2f, mapWidth, _mapDepth);
-                NevishkFog.Build(_root, box, new Vector2(4200f, 3800f), NevishkBrowser.PrefersReducedMotion);
+                var cityRect = _terrain.WorldRect;
+                float Ground(float x, float z) => cityRect.Contains(new Vector2(x, z))
+                    ? _terrain.HeightAtWorld(new Vector3(x, 0f, z))
+                    : _landscape.HeightAt(x, z);
+                NevishkFog.Build(_root, box, new Vector2(_landscape.HalfX, _landscape.HalfZ), Ground, NevishkBrowser.PrefersReducedMotion);
                 return;
             }
             _terrain = null;   // fall back to the flat map
@@ -376,8 +380,11 @@ namespace Nevishk
                         width = F(r["width"])
                     });
                 }
-            new NevishkLandscape(_terrain).Build(_root, MatFor, groundMaterial, starts);
+            _landscape = new NevishkLandscape(_terrain);
+            _landscape.Build(_root, MatFor, groundMaterial, starts);
         }
+
+        NevishkLandscape _landscape;
 
         bool NearRail(Vector3 world, float margin) => _rail != null && _rail.DistanceXZ(world) < margin;
 

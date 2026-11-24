@@ -158,7 +158,7 @@ namespace Nevishk
             }
         }
 
-        float HeightAt(float x, float z)
+        public float HeightAt(float x, float z)
         {
             float gx = Mathf.Clamp((x + HalfX) / Cell, 0, _nx - 1.001f), gz = Mathf.Clamp((HalfZ - z) / Cell, 0, _nz - 1.001f);
             int i = (int)gx, j = (int)gz; float fx = gx - i, fz = gz - j;

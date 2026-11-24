@@ -93,7 +93,10 @@ Shader "Nevishk/Fog"
                 // Soft where the mist meets the ground or a building.
                 float2 screenUV = GetNormalizedScreenSpaceUV(i.positionCS);
                 float sceneEye = LinearEyeDepth(SampleSceneDepth(screenUV), _ZBufferParams);
-                half soft = saturate((sceneEye - i.eyeDepth) / max(_Soft, 0.01));
+                // The hardware depth test already hides fog behind the ground, so a scene depth in FRONT of this
+                // fragment means the depth texture isn't valid yet (not copied, or copied after transparents):
+                // then skip the softening rather than fading the fog to nothing.
+                half soft = sceneEye < i.eyeDepth - 2.0 ? 1.0 : saturate((sceneEye - i.eyeDepth) / max(_Soft, 0.01));
 
                 // Thin out right in front of the camera, so it can be flown through.
                 float camDist = distance(_WorldSpaceCameraPos, i.positionWS);

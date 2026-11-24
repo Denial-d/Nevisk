@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -16,7 +17,8 @@ namespace Nevishk
 
         /// <param name="box">The drawn city (the map image's extent) in world XZ.</param>
         /// <param name="outer">How far out the countryside reaches (half extents), for the murk layers.</param>
-        public static void Build(Transform parent, Rect box, Vector2 outer, bool reducedMotion)
+        /// <param name="ground">Ground height at world (x, z), city terrain and countryside alike.</param>
+        public static void Build(Transform parent, Rect box, Vector2 outer, Func<float, float, float> ground, bool reducedMotion)
         {
             var shader = Shader.Find("Nevishk/Fog");
             if (shader == null || !shader.isSupported)
@@ -34,14 +36,48 @@ namespace Nevishk
             float hx = box.width / 2f + 90f, hz = box.height / 2f + 95f, corner = 160f;
 
             // Three walls, one behind the other, drifting in alternate directions: depth without volumetrics.
-            Wall(root, shader, noise, speed, c, hx, hz, corner, 0f, 120f, 0.62f, new Vector4(7f, 3f, -5f, 4f));
-            Wall(root, shader, noise, speed, c, hx, hz, corner, 45f, 145f, 0.52f, new Vector4(-6f, 2.5f, 4f, 3.5f));
-            Wall(root, shader, noise, speed, c, hx, hz, corner, 100f, 175f, 0.48f, new Vector4(5f, 2f, -3f, 3f));
+            Wall(root, shader, noise, speed, ground, c, hx, hz, corner, 0f, 110f, 0.70f, new Vector4(7f, 3f, -5f, 4f));
+            Wall(root, shader, noise, speed, ground, c, hx, hz, corner, 45f, 135f, 0.60f, new Vector4(-6f, 2.5f, 4f, 3.5f));
+            Wall(root, shader, noise, speed, ground, c, hx, hz, corner, 100f, 160f, 0.55f, new Vector4(5f, 2f, -3f, 3f));
 
-            // Murk over the country: stacked sheets, clear inside the ring, thickening outward.
-            Sheet(root, shader, noise, speed, c, hx, hz, corner, outer, 14f, 0.40f, new Vector4(6f, 2f, -4f, 3f));
-            Sheet(root, shader, noise, speed, c, hx, hz, corner, outer, 32f, 0.34f, new Vector4(-5f, 3f, 3f, -2f));
-            Sheet(root, shader, noise, speed, c, hx, hz, corner, outer, 56f, 0.28f, new Vector4(4f, -3f, -6f, 2f));
+            // Murk over the country: stacked sheets draped loosely over the land, clear inside the ring, thickening outward.
+            var grid = GroundGrid(ground, outer, SheetCell);
+            Sheet(root, shader, noise, speed, grid, c, hx, hz, corner, outer, 10f, 0.48f, new Vector4(6f, 2f, -4f, 3f));
+            Sheet(root, shader, noise, speed, grid, c, hx, hz, corner, outer, 24f, 0.40f, new Vector4(-5f, 3f, 3f, -2f));
+            Sheet(root, shader, noise, speed, grid, c, hx, hz, corner, outer, 42f, 0.32f, new Vector4(4f, -3f, -6f, 2f));
+            Debug.Log($"[Nevishk] Fog zone: {root.childCount} layers around the city.");
+        }
+
+        const float SheetCell = 80f;
+
+        /// Ground under the sheets: raw heights (for hiding fog that would be underground) and a broadly smoothed
+        /// version the sheets follow, so they drape over the country without hugging every bump.
+        static (float[] raw, float[] smooth, int nx, int nz) GroundGrid(Func<float, float, float> ground, Vector2 outer, float cell)
+        {
+            int nx = Mathf.CeilToInt(outer.x * 2f / cell) + 1, nz = Mathf.CeilToInt(outer.y * 2f / cell) + 1;
+            var raw = new float[nx * nz];
+            for (int j = 0; j < nz; j++)
+            for (int i = 0; i < nx; i++)
+                raw[j * nx + i] = ground(-outer.x + i * cell, -outer.y + j * cell);
+            var a = (float[])raw.Clone(); var b = new float[a.Length];
+            for (int pass = 0; pass < 4; pass++)
+            {
+                for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                {
+                    float sum = 0; int cnt = 0;
+                    for (int dj = -2; dj <= 2; dj++)
+                    for (int di = -2; di <= 2; di++)
+                    {
+                        int ii = i + di, jj = j + dj;
+                        if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
+                        sum += a[jj * nx + ii]; cnt++;
+                    }
+                    b[j * nx + i] = sum / cnt;
+                }
+                (a, b) = (b, a);
+            }
+            return (raw, a, nx, nz);
         }
 
         // ------------------------------------------------------------------ geometry
@@ -86,27 +122,41 @@ namespace Nevishk
             return pts;
         }
 
-        static void Wall(Transform root, Shader shader, Texture2D noise, float speed, Vector2 c, float hx, float hz, float r,
-                         float offset, float height, float density, Vector4 flow)
+        static void Wall(Transform root, Shader shader, Texture2D noise, float speed, Func<float, float, float> ground,
+                         Vector2 c, float hx, float hz, float r, float offset, float height, float density, Vector4 flow)
         {
             var ring = Ring(c, hx + offset, hz + offset, r + offset, 14f);
-            const int rows = 8;
-            const float bottom = -30f;
+            const int rows = 10;
+            // Ground along the ring, smoothed a little so the wall's foot doesn't jitter.
+            var g = new float[ring.Count];
+            for (int i = 0; i < ring.Count; i++) g[i] = ground(ring[i].p.x, ring[i].p.y);
+            var gs = new float[g.Length];
+            for (int i = 0; i < g.Length; i++)
+            {
+                float sum = 0; for (int k = -3; k <= 3; k++) sum += g[(i + k + g.Length) % g.Length];
+                gs[i] = Mathf.Max(sum / 7f, g[i]);
+            }
             var v = new List<Vector3>(); var n = new List<Vector3>(); var uv = new List<Vector2>(); var col = new List<Color>(); var tri = new List<int>();
             float along = 0f;
             for (int i = 0; i <= ring.Count; i++)
             {
                 var (p, nrm) = ring[i % ring.Count];
                 if (i > 0) along += Vector2.Distance(ring[i - 1].p, p);
+                float foot = gs[i % ring.Count];
                 for (int y = 0; y < rows; y++)
                 {
-                    float t = y / (float)(rows - 1);
-                    float h = Mathf.Lerp(bottom, height, t);
+                    // Rows bunched toward the ground, where the density changes fastest.
+                    float t = y / (float)(rows - 1); t *= t;
+                    float above = Mathf.Lerp(-8f, height, t);
+                    float h = foot + above;
                     v.Add(new Vector3(p.x, h, p.y));
                     n.Add(new Vector3(nrm.x, 0f, nrm.y));
                     uv.Add(new Vector2(along, h));
-                    float up = Mathf.Clamp01(h / height);
-                    col.Add(new Color(1, 1, 1, Mathf.Pow(1f - up, 1.4f)));   // dense at the foot, gone at the top
+                    // Fades in over the first metres above the ground (no hard line where it meets the land),
+                    // dense low down, gone at the top.
+                    float contact = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-2f, 14f, above));
+                    float up = Mathf.Clamp01(above / height);
+                    col.Add(new Color(1, 1, 1, contact * Mathf.Pow(1f - up, 1.3f)));
                 }
                 if (i == 0) continue;
                 int a0 = (i - 1) * rows, b0 = i * rows;
@@ -119,11 +169,11 @@ namespace Nevishk
             Add(root, "Fog wall", v, n, uv, col, tri, Material(shader, noise, speed, density, flow, 0.0045f, 12f));
         }
 
-        static void Sheet(Transform root, Shader shader, Texture2D noise, float speed, Vector2 c, float hx, float hz, float r,
-                          Vector2 outer, float y, float density, Vector4 flow)
+        static void Sheet(Transform root, Shader shader, Texture2D noise, float speed, (float[] raw, float[] smooth, int nx, int nz) grid,
+                          Vector2 c, float hx, float hz, float r, Vector2 outer, float lift, float density, Vector4 flow)
         {
-            const float cell = 110f;
-            int nx = Mathf.CeilToInt(outer.x * 2f / cell) + 1, nz = Mathf.CeilToInt(outer.y * 2f / cell) + 1;
+            const float cell = SheetCell;
+            int nx = grid.nx, nz = grid.nz;
             var v = new List<Vector3>(nx * nz); var n = new List<Vector3>(nx * nz); var uv = new List<Vector2>(nx * nz);
             var col = new List<Color>(nx * nz); var tri = new List<int>();
             var alpha = new float[nx * nz];
@@ -136,7 +186,12 @@ namespace Nevishk
                 float a = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(30f, 420f, d));
                 float edge = Mathf.Max(Mathf.Abs(x) / outer.x, Mathf.Abs(z) / outer.y);
                 a *= 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.82f, 1f, edge));
-                alpha[j * nx + i] = a;
+                // Drape over the land, but stop rising at 120 m so the high ridges stand out of the murk.
+                int k = j * nx + i;
+                float y = Mathf.Min(grid.smooth[k] + lift, 120f + lift * 0.5f);
+                // Where the layer would run into a hillside, thin it out instead of cutting a hard line.
+                a *= Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-4f, 10f, y - grid.raw[k]));
+                alpha[k] = a;
                 v.Add(new Vector3(x, y, z)); n.Add(Vector3.up); uv.Add(new Vector2(x, z)); col.Add(new Color(1, 1, 1, a));
             }
             for (int j = 0; j < nz - 1; j++)
