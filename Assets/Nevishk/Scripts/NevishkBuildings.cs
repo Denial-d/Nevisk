@@ -793,6 +793,7 @@ namespace Nevishk
         public static Mesh CylinderMesh => UnitCylinder;
         public static Mesh GableMesh => PrismMesh;
         public static Mesh SpireMesh => ConeMesh;
+        public static Mesh SphereMesh => UnitSphere;
         static Mesh UnitCube => _cube != null ? _cube : (_cube = Primitive(PrimitiveType.Cube));
         static Mesh UnitCylinder => _cyl != null ? _cyl : (_cyl = Primitive(PrimitiveType.Cylinder));
         static Mesh _sphere;

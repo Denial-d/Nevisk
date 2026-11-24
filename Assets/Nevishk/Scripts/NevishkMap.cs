@@ -105,9 +105,49 @@ namespace Nevishk
             _camera.nearClipPlane = 1f;
             ResetView();
 
+            SetUpStoryMode();
+
             // Deep link: https://…/index.html#lm_046 opens that entry directly.
             NevishkBrowser.ListenForBackButton(gameObject.name);
             OnBrowserHashChanged(NevishkBrowser.GetHash());
+        }
+
+        // ------------------------------------------------------------------ story mode
+
+        StoryMode _story;
+
+        void SetUpStoryMode()
+        {
+            var rect = _terrain != null ? _terrain.WorldRect : new Rect(-mapWidth / 2, -_mapDepth / 2, mapWidth, _mapDepth);
+            _story = gameObject.AddComponent<StoryMode>();
+            _story.cam = _camera; _story.camCtl = _cam; _story.ui = _ui;
+            _story.ground = GroundAtWorld;
+            _story.anchorOf = id =>
+            {
+                if (!_pins.TryGetValue(id, out var pin)) return null;
+                // Strings tie onto the name tag, like a pin through a card.
+                return pin.label != null ? pin.label.transform.position + Vector3.down * 3f : pin.transform.position;
+            };
+            _story.nameOf = id => _db.District(id)?.name ?? _db.Landmark(id)?.name;
+            _story.clampToMap = w => new Vector3(Mathf.Clamp(w.x, rect.xMin + 5f, rect.xMax - 5f), 0f, Mathf.Clamp(w.z, rect.yMin + 5f, rect.yMax - 5f));
+            _story.makeLabel = (parent, text) =>
+            {
+                var l = MakeLabel(parent, text, 40f, NevishkTheme.Text, false);
+                var plate = MakePlate(l, 3f, 1.6f);
+                plate.color = NevishkTheme.LabelPlate;
+                return l;
+            };
+            _story.material = c => MatFor(c);
+            _story.Init();
+        }
+
+        /// Surface height (water or ground) anywhere: the city terrain inside its extent, the countryside outside.
+        float GroundAtWorld(Vector3 w)
+        {
+            if (_terrain == null) return 0f;
+            var rect = _terrain.WorldRect;
+            if (rect.Contains(new Vector2(w.x, w.z))) return Surface(w.x / mapWidth + 0.5f, 0.5f - w.z / _mapDepth);
+            return _landscape != null ? _landscape.HeightAt(w.x, w.z) : 0f;
         }
 
         // ------------------------------------------------------------------ deep links
@@ -120,7 +160,13 @@ namespace Nevishk
             _applyingHash = true;
             try
             {
-                if (string.IsNullOrEmpty(hash)) { if (_ui.PanelOpen) _ui.Close(); }
+                if (!string.IsNullOrEmpty(hash) && hash.StartsWith("story="))
+                {
+                    // A shared story scene: open it, then tidy the address so it doesn't reopen on reload.
+                    _story?.OpenShared(hash.Substring(6));
+                    NevishkBrowser.SetHash("", false);
+                }
+                else if (string.IsNullOrEmpty(hash)) { if (_ui.PanelOpen) _ui.Close(); }
                 else if (_db.District(hash) != null) SelectDistrict(hash, false);
                 else if (_db.Landmark(hash) != null) SelectLandmark(hash, false);
                 else if (_db.Document(hash) != null) _ui.ShowDocument(hash, false);
@@ -138,14 +184,16 @@ namespace Nevishk
         {
             if (_camera == null) return;
             UpdateHover();
+            // Story mode first: it may use this click (placing, dragging, tying a string) or the Esc key.
+            bool storyUsed = _story != null && _story.Tick(_hovered);
 
             bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-            if (MapInput.PrimaryUp && !_cam.LastPressWasDrag && !overUI && _hovered != null)
+            if (!storyUsed && MapInput.PrimaryUp && !_cam.LastPressWasDrag && !overUI && _hovered != null)
             {
                 if (_hovered.kind == PinKind.District) SelectDistrict(_hovered.id, false);
                 else SelectLandmark(_hovered.id, false);
             }
-            if (MapInput.EscapeDown)
+            if (!storyUsed && MapInput.EscapeDown)
             {
                 if (_ui.LightboxOpen) _ui.CloseLightbox();
                 else if (_ui.PanelOpen) _ui.Close();

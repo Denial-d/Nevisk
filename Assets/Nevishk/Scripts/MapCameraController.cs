@@ -35,6 +35,8 @@ namespace Nevishk
         public bool IsDragging => _held && _dragged;
         /// Optional: ground height under a world point, so the camera never dips into hills.
         public System.Func<Vector3, float> groundHeight;
+        /// Optional: return true to keep a press for something else (e.g. dragging a story figure); the camera ignores it.
+        public System.Func<Vector2, bool> claimPress;
         /// <summary>Stays true after release until the next press, so a drag never counts as a click.</summary>
         public bool LastPressWasDrag => _dragged;
         bool _held, _dragged;
@@ -149,6 +151,7 @@ namespace Nevishk
                 _pressStartedOverUI = PointerOverUI();
                 _lastPointer = p; _pressPos = p; _dragged = false;
                 if (_pressStartedOverUI) ReportBlockingUI(p);
+                else if (MapInput.PrimaryDown && claimPress != null && claimPress(p)) _pressStartedOverUI = true;
             }
 
             bool primary = MapInput.PrimaryHeld, secondary = MapInput.SecondaryHeld;
@@ -212,7 +215,7 @@ namespace Nevishk
                 Vector2 p = MapInput.TouchPosition(0);
                 if (MapInput.PrimaryDown)
                 {
-                    _pressStartedOverUI = PointerOverUI();
+                    _pressStartedOverUI = PointerOverUI() || (claimPress != null && claimPress(p));
                     _lastPointer = p; _pressPos = p; _dragged = false;
                 }
                 _held = true;

@@ -18,7 +18,7 @@ namespace Nevishk
     /// hover tooltip, and the reading panel for districts, landmarks and archive documents.
     /// All colours, sizes and fonts come from NevishkTheme / NevishkFonts.
     /// </summary>
-    public class LorePanelUI : MonoBehaviour
+    public partial class LorePanelUI : MonoBehaviour
     {
         public event Action<string> DistrictClicked;
         public event Action<string> LandmarkClicked;
@@ -73,6 +73,7 @@ namespace Nevishk
             BuildPanel();
             BuildDistrictBar();
             SetDrawer(false, true);
+            BuildStoryUI();
             BuildTooltip();
             BuildLightbox();
             _panel.gameObject.SetActive(false);
@@ -584,6 +585,7 @@ namespace Nevishk
         void BuildHeader()
         {
             var header = NewRect("Header", _canvasRect);
+            _header = header;
             header.anchorMin = header.anchorMax = header.pivot = new Vector2(0, 1);
             header.anchoredPosition = new Vector2(T.S3, -T.S3);
             header.sizeDelta = new Vector2(460, 172);
@@ -610,6 +612,12 @@ namespace Nevishk
             var arch = SmallButton(header, "Архив", () => Show(new Entry { id = null, render = RenderArchiveIndex }, false));
             arch.anchorMin = arch.anchorMax = arch.pivot = new Vector2(0, 1);
             arch.anchoredPosition = new Vector2(T.S3 + 220 + T.S1 + reset.sizeDelta.x + T.S1, y);
+
+            var story = SmallButton(header, "Сюжет", () => StoryToggled?.Invoke(!_storyOn));
+            story.anchorMin = story.anchorMax = story.pivot = new Vector2(0, 1);
+            story.anchoredPosition = new Vector2(arch.anchoredPosition.x + arch.sizeDelta.x + T.S1, y);
+            _storyButton = story.GetComponent<Image>();
+            arch = story;   // the header grows to fit the last button
 
             // Controls hint (touch users get the gestures; the rest is in the README).
             float hy = y - T.TouchTarget - T.S1;
