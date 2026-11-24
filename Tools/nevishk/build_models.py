@@ -101,6 +101,9 @@ MODELS = [
     ('chapel',   (880, 474), (14, 18), 0,   'Храм бомжа', None),
     # The heavy straight line on Ущелье's south-west rim, labelled «Мост»: the viaduct Ущелье lies under.
     ('bridge',   (412, 415), (131, 10), 30.6, 'Мост', 'Мост (виадук)'),
+    # Placed by hand on the ravine floor (positions chosen in the 3D view).
+    ('fountain',   (435, 359), (12, 12), 0, 'Фонтан «Забвение»', None),
+    ('watertower', (405, 349), (10, 10), 0, 'Насосная башня', None),
 ]
 lore = json.load(open(LORE, encoding='utf-8'))
 by_name = {l['name']: l['id'] for l in lore['landmarks']}

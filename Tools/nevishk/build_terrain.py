@@ -147,9 +147,13 @@ h[park] = (2.5 + n_low * 0.5)[park]
 
 # ---- ponds in the park and around Камыши
 pond_d = ndi.distance_transform_edt(ponds)
-base_here = np.where(park, 2.5, 4.5)
-h[ponds] = (base_here - 1.5 - 3.0 * smooth(pond_d, 0, 4))[ponds]
-water[ponds] = (base_here - 1.0)[ponds]
+plab, pn = ndi.label(ponds)
+for i in range(1, pn + 1):
+    comp = plab == i
+    ring = ndi.binary_dilation(comp, iterations=4) & ~comp & ~ponds
+    lvl = (h[ring].min() if ring.any() else 1.0) - 0.5          # never above the land around it
+    h[comp] = (lvl - 0.6 - 2.5 * smooth(pond_d, 0, 4))[comp]
+    water[comp] = lvl
 
 # ---- outside the city: hills, inlets where the river leaves, mountains to the east
 d_out = ndi.distance_transform_edt(exterior)
@@ -206,6 +210,12 @@ water[river_mask] = 0.0
 mouth |= river_mask
 
 h = ndi.gaussian_filter(h, 0.8)
+# After smoothing, ground just outside the river can dip below the water: anything below river level that
+# connects to the river is river (never the ravine, which sits far below but is dry).
+low = (h < -0.02) & ~ndi.binary_dilation(ravine, iterations=3)
+lab_low, _ = ndi.label(low)
+touching = np.unique(lab_low[(water == 0.0) & low])
+water[np.isin(lab_low, touching[touching > 0])] = 0.0
 
 # ---- ground colour
 def col(hexs):

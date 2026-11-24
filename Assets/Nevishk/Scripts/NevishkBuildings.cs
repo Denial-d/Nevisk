@@ -349,7 +349,7 @@ namespace Nevishk
                 float a = Mathf.PI * (i + 0.5f) / planks;                       // 0..π from one wall to the other
                 float seg = Mathf.PI * half / planks;
                 var centre = new Vector3(0, wallH + Mathf.Sin(a) * half, Mathf.Cos(a) * half);
-                k.BoxRotated(centre, new Vector3(w, 0.45f, seg + 0.15f), Quaternion.Euler(a * Mathf.Rad2Deg - 90f, 0, 0), DarkConc);
+                k.BoxRotated(centre, new Vector3(w, 0.45f, seg + 0.15f), Quaternion.Euler(90f - a * Mathf.Rad2Deg, 0, 0), DarkConc);   // plank tangent to the arch
             }
             // Dark interior gable rims at each end, so the openings read as doorways.
             foreach (float s in new[] { -1f, 1f })

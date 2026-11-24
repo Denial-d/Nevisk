@@ -248,8 +248,8 @@ namespace Nevishk
                     else if (i < GridW - 1 && !float.IsNaN(level[k + 1])) found = level[k + 1];
                     else if (j > 0 && !float.IsNaN(level[k - GridW])) found = level[k - GridW];
                     else if (j < GridH - 1 && !float.IsNaN(level[k + GridW])) found = level[k + GridW];
-                    // Only spread under banks, never into a deeper hollow (the ravine) where it would show.
-                    if (!float.IsNaN(found) && _h[k] > found - 2f) grown[k] = found;
+                    // Only spread under ground that is above the water (so it stays hidden); never over lower land.
+                    if (!float.IsNaN(found) && _h[k] >= found + 0.05f) grown[k] = found;
                 }
                 level = grown;
             }
