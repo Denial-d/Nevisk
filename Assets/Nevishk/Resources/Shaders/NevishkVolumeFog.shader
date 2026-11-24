@@ -18,8 +18,8 @@ Shader "Nevishk/VolumeFog"
         _Speed ("Time scale (0 = still)", Float) = 1
         _Ground ("Smoothed ground height", 2D) = "black" {}
         _GroundST ("Ground uv: scale xy, offset zw", Vector) = (0.0001, 0.0001, 0.5, 0.5)
-        _Ring ("Ring centre xy, half size zw", Vector) = (0, 0, 730, 385)
-        _RingCorner ("Ring corner radius", Float) = 160
+        _Ring ("Oval centre xy, semi-axes zw", Vector) = (0, 0, 900, 470)
+        _RingCorner ("How far the oval's edge wanders (m)", Float) = 120
         _Extent ("Landscape half size xy, fog top z, bottom w", Vector) = (4200, 3800, 260, -60)
         _Height ("Murk scale height (m)", Float) = 32
         _WallHeight ("Wall scale height (m)", Float) = 140
@@ -76,18 +76,36 @@ Shader "Nevishk/VolumeFog"
                 return o;
             }
 
-            float RingDistance(float2 p)
+            /// Approximate signed distance (m) to the oval around the city: an ellipse whose edge is pushed in and out
+            /// by slow, large-scale noise, so the bank has bays and promontories instead of a perfect outline.
+            float RingDistance(float2 p, float t)
             {
-                float2 q = abs(p - _Ring.xy) - (_Ring.zw - _RingCorner);
-                return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - _RingCorner;
+                float2 q = p - _Ring.xy;
+                float2 a = _Ring.zw;
+                float f = length(q / a);
+                float g = length(q / (a * a));
+                float d = (f - 1.0) * f / max(g, 1e-5);
+                if (d > -450.0 && d < 700.0)
+                {
+                    float w = SAMPLE_TEXTURE3D_LOD(_Noise3D, sampler_Noise3D, float3(p.x, t * 1.2, p.y) * (1.0 / 3200.0), 0).r;
+                    d += (w - 0.5) * 2.0 * _RingCorner;       // _RingCorner = how far the edge wanders (m)
+                }
+                return d;
             }
 
             float Density(float3 p, float t)
             {
-                float sdf = RingDistance(p.xz);
-                // Clear inside; a bank centred ~100 m outside the ring; murk building up over the first few hundred metres.
-                float wall = exp(-pow((sdf - 100.0) / 95.0, 2.0));
-                float murk = smoothstep(20.0, 380.0, sdf);
+                float sdf = RingDistance(p.xz, t);
+                // Clear inside; a bank centred ~110 m outside the oval; murk out beyond it.
+                float wall = exp(-pow((sdf - 110.0) / 95.0, 2.0));
+                float murk = smoothstep(60.0, 420.0, sdf);
+                if (murk > 0.002)
+                {
+                    // Over the country the murk lies in drifting patches: big soft-edged zones of fog and clear air.
+                    float z = SAMPLE_TEXTURE3D_LOD(_Noise3D, sampler_Noise3D,
+                                                   float3(p.x - _Wind.x * t * 0.35, t * 0.8, p.z - _Wind.z * t * 0.35) * (1.0 / 6500.0), 0).r;
+                    murk *= smoothstep(0.42, 0.66, z);
+                }
                 float2 edge = abs(p.xz) / _Extent.xy;
                 float amount = max(murk, wall) * (1.0 - smoothstep(0.8, 1.0, max(edge.x, edge.y)));
                 if (amount < 0.002) return 0.0;

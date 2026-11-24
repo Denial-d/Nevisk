@@ -53,8 +53,9 @@ namespace Nevishk
             // Texel (i, j) holds the ground at (-outer.x + i*cell, -outer.y + j*cell); sample at texel centres.
             m.SetVector("_GroundST", new Vector4(1f / (SheetCell * grid.nx), 1f / (SheetCell * grid.nz),
                                                  (outer.x / SheetCell + 0.5f) / grid.nx, (outer.y / SheetCell + 0.5f) / grid.nz));
-            m.SetVector("_Ring", new Vector4(c.x, c.y, hx, hz));
-            m.SetFloat("_RingCorner", corner);
+            // An oval round the drawn city: semi-axes chosen so the map's corners sit just inside it.
+            m.SetVector("_Ring", new Vector4(c.x, c.y, (hx - 90f) * 1.41f, (hz - 95f) * 1.62f));
+            m.SetFloat("_RingCorner", 120f);   // how far the edge wanders in and out (m)
             m.SetVector("_Extent", new Vector4(outer.x, outer.y, top, bottom));
             m.SetFloat("_Height", 45f);
             m.SetFloat("_WallHeight", 140f);
