@@ -184,6 +184,16 @@ for d in districts:
     if d['id'] in HAND:
         px, py = HAND[d['id']]; d['uv'] = [round(px / IMG_W, 4), round(py / IMG_H, 4)]
 
+# ---------- district photos (Resources/Images; captions from the Miro file names) ----------
+IMAGES = {
+    'ushchelye': [('ush_plity', 'Безмолвные плиты'), ('ush_vodopad', 'Водопад'), ('ush_podezd', 'Подъезд'),
+                  ('ush_alleya', 'Аллея'), ('ush_alleya2', 'Аллея'), ('ush_fontan', 'Фонтан')],
+    'nevishk_tech': [('nt_towers', 'Невишк-Тех')],
+    'novyi_tsentr': [('nc_prime', 'Невишк Prime City'), ('nc_kofe', 'Кофемырлия'), ('nc_balaur', 'Балаур')],
+}
+for d in districts:
+    d['images'] = [dict(file=f, caption=c) for f, c in IMAGES.get(d['id'], [])]
+
 # ---------- landmarks ----------
 def nearest_district(uv):
     return min(districts, key=lambda d: (d['uv'][0] - uv[0]) ** 2 + (d['uv'][1] - uv[1]) ** 2)['id']

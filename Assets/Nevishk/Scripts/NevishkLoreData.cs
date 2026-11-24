@@ -36,6 +36,14 @@ namespace Nevishk
         public string text;
         public string[] docs;
         public float[] uv;      // 0..1 on the base map image, origin top-left
+        public ImageInfo[] images;
+    }
+
+    [Serializable]
+    public class ImageInfo
+    {
+        public string file;     // Resources/Images/<file>
+        public string caption;
     }
 
     [Serializable]

@@ -29,6 +29,7 @@ namespace Nevishk
 
         public bool ReducedMotion { get; set; }
         public bool PanelOpen => _panel != null && _panel.gameObject.activeSelf;
+        public bool LightboxOpen => _lightbox != null && _lightbox.gameObject.activeSelf;
 
         LoreDatabase _db;
         RectTransform _canvasRect, _panel, _content, _tooltipRect;
@@ -37,6 +38,10 @@ namespace Nevishk
         TextMeshProUGUI _kicker, _title, _meta, _tooltip;
         Button _backBtn;
         TMP_InputField _search;
+        RectTransform _lightbox;
+        RawImage _lightboxImage;
+        AspectRatioFitter _lightboxFit;
+        TextMeshProUGUI _lightboxCaption;
         readonly Dictionary<string, Image> _districtUnderlines = new Dictionary<string, Image>();
 
         struct Entry { public Action render; public string id; }
@@ -69,6 +74,7 @@ namespace Nevishk
             BuildDistrictBar();
             SetDrawer(false, true);
             BuildTooltip();
+            BuildLightbox();
             _panel.gameObject.SetActive(false);
         }
 
@@ -85,6 +91,7 @@ namespace Nevishk
 
         public void Close()
         {
+            CloseLightbox();
             if (!PanelOpen) return;
             _history.Clear(); _current = default;
             SetActiveDistrict(null);
@@ -180,8 +187,17 @@ namespace Nevishk
             if (!string.IsNullOrEmpty(d.status)) meta.Add(StatusRu(d.status));
             _meta.text = string.Join("   ·   ", meta);
 
+            var photos = d.images ?? Array.Empty<ImageInfo>();
+            if (photos.Length > 0) AddPhoto(photos[0], true);
+
             if (!string.IsNullOrEmpty(d.text)) AddBody(d.text);
             else AddNote("Лор района ещё пишется.");
+
+            if (photos.Length > 1)
+            {
+                AddSection($"Снимки · {photos.Length - 1}");
+                AddPhotoGrid(photos, 1);
+            }
 
             AddDocRows(d.docs);
 
@@ -383,6 +399,138 @@ namespace Nevishk
             t.characterSpacing = T.KickerTracking;
             var r = t.rectTransform; r.anchorMin = Vector2.zero; r.anchorMax = Vector2.one; r.offsetMin = Vector2.zero; r.offsetMax = new Vector2(0, -T.S2 - 4);
             t.alignment = TextAlignmentOptions.BottomLeft;
+        }
+
+        // ---------------------------------------------------------------- photos
+
+        static readonly Dictionary<string, Texture2D> _photoCache = new Dictionary<string, Texture2D>();
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() => _photoCache.Clear();
+
+        static Texture2D Photo(string file)
+        {
+            if (string.IsNullOrEmpty(file)) return null;
+            if (_photoCache.TryGetValue(file, out var t) && t != null) return t;
+            t = Resources.Load<Texture2D>("Images/" + file);
+            if (t == null) Debug.LogWarning($"[Nevishk] Image Resources/Images/{file} missing.");
+            _photoCache[file] = t;
+            return t;
+        }
+
+        /// One photo across the full column, at its own aspect ratio, with the caption under it.
+        void AddPhoto(ImageInfo info, bool lead)
+        {
+            var tex = Photo(info.file);
+            if (tex == null) return;
+            var go = new GameObject(lead ? "Lead Photo" : "Photo", typeof(RectTransform));
+            go.transform.SetParent(_content, false);
+            // Wide shots keep their shape; square and tall ones are cropped to 4:3 so the text isn't pushed off screen.
+            float ratio = (float)tex.height / tex.width;
+            go.AddComponent<HeightFromWidth>().ratio = Mathf.Min(ratio, 0.75f);
+            PhotoCell((RectTransform)go.transform, tex, info, ratio > 0.75f, false);
+            if (!string.IsNullOrEmpty(info.caption)) AddCaption(info.caption);
+        }
+
+        /// Photos two to a row, cropped to the same 4:3 cells (an odd last one spans the row), each opening the lightbox.
+        void AddPhotoGrid(ImageInfo[] photos, int start)
+        {
+            for (int i = start; i < photos.Length; i += 2)
+            {
+                var row = new GameObject("Photo Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+                row.transform.SetParent(_content, false);
+                var h = row.GetComponent<HorizontalLayoutGroup>();
+                h.spacing = T.S1; h.childControlWidth = h.childControlHeight = true;
+                h.childForceExpandWidth = h.childForceExpandHeight = true;
+                row.AddComponent<HeightFromWidth>().ratio = 0.375f;   // two 4:3 cells side by side
+                for (int k = i; k < i + 2 && k < photos.Length; k++)
+                {
+                    var tex = Photo(photos[k].file);
+                    if (tex != null) PhotoCell(NewRect("Slot", row.transform), tex, photos[k], true, true);
+                }
+            }
+        }
+
+        /// Fills `parent` with the photo (cropped to cover when `crop`), an optional caption strip, and a click to enlarge.
+        RectTransform PhotoCell(RectTransform parent, Texture2D tex, ImageInfo info, bool crop, bool strip)
+        {
+            var frame = NewRect("Frame", parent); Fill(frame);
+            frame.gameObject.AddComponent<Image>().color = T.Raised;
+            var btn = frame.gameObject.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() => OpenLightbox(tex, info.caption));
+            frame.gameObject.AddComponent<RectMask2D>();
+
+            var img = NewRect("Image", frame); Fill(img);
+            var raw = img.gameObject.AddComponent<RawImage>();
+            raw.texture = tex; raw.raycastTarget = false;
+            if (crop) img.gameObject.AddComponent<CoverCrop>().texture = tex;
+
+            if (strip && !string.IsNullOrEmpty(info.caption))
+            {
+                var bar = NewRect("Caption", frame);
+                bar.anchorMin = Vector2.zero; bar.anchorMax = new Vector2(1, 0); bar.pivot = new Vector2(0.5f, 0);
+                bar.sizeDelta = new Vector2(0, 30);
+                var si = bar.gameObject.AddComponent<Image>(); si.color = T.Scrim; si.raycastTarget = false;
+                var t = NewText("Text", bar, info.caption, NevishkFonts.UI, T.SizeRowSub, T.Text);
+                Fill(t.rectTransform, 10, 0); t.alignment = TextAlignmentOptions.MidlineLeft;
+                t.textWrappingMode = TextWrappingModes.NoWrap; t.overflowMode = TextOverflowModes.Ellipsis;
+            }
+
+            // Hover: a faint bone edge, matching the rows.
+            var edge = frame.gameObject.AddComponent<Outline>();
+            edge.effectColor = new Color(0, 0, 0, 0); edge.effectDistance = new Vector2(2, -2);
+            var hover = frame.gameObject.AddComponent<HoverEdge>(); hover.outline = edge; hover.on = T.Border * 3f;
+            return frame;
+        }
+
+        void AddCaption(string text)
+        {
+            var t = AddText(text, NevishkFonts.UI, T.SizeRowSub, T.TextMuted);
+            t.margin = new Vector4(0, -2, 0, T.S1);
+        }
+
+        void BuildLightbox()
+        {
+            _lightbox = NewRect("Lightbox", _canvasRect); Fill(_lightbox);
+            _lightbox.gameObject.AddComponent<Image>().color = new Color(0.03f, 0.03f, 0.02f, 0.92f);
+            var close = _lightbox.gameObject.AddComponent<Button>();
+            close.transition = Selectable.Transition.None;
+            close.onClick.AddListener(CloseLightbox);
+
+            var area = NewRect("Area", _lightbox); Fill(area, T.S6, T.S6 + T.S4);
+            var img = NewRect("Image", area);
+            img.anchorMin = img.anchorMax = img.pivot = new Vector2(0.5f, 0.5f);
+            _lightboxImage = img.gameObject.AddComponent<RawImage>(); _lightboxImage.raycastTarget = false;
+            _lightboxFit = img.gameObject.AddComponent<AspectRatioFitter>();
+            _lightboxFit.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+
+            _lightboxCaption = NewText("Caption", _lightbox, "", NevishkFonts.Reading, T.SizeBody, T.Text);
+            var cr = _lightboxCaption.rectTransform;
+            cr.anchorMin = new Vector2(0, 0); cr.anchorMax = new Vector2(1, 0); cr.pivot = new Vector2(0.5f, 0);
+            cr.sizeDelta = new Vector2(-T.S6 * 2, T.S6); cr.anchoredPosition = new Vector2(0, T.S1);
+            _lightboxCaption.alignment = TextAlignmentOptions.Center;
+
+            var hint = NewText("Hint", _lightbox, "×", NevishkFonts.UI, 32, T.TextMuted);
+            var hr = hint.rectTransform; hr.anchorMin = hr.anchorMax = hr.pivot = new Vector2(1, 1);
+            hr.sizeDelta = new Vector2(T.TouchTarget, T.TouchTarget); hr.anchoredPosition = new Vector2(-T.S2, -T.S2);
+            hint.alignment = TextAlignmentOptions.Center;
+
+            _lightbox.gameObject.SetActive(false);
+        }
+
+        void OpenLightbox(Texture2D tex, string caption)
+        {
+            _lightboxImage.texture = tex;
+            _lightboxFit.aspectRatio = (float)tex.width / tex.height;
+            _lightboxCaption.text = string.IsNullOrEmpty(caption) ? "" : $"<i>{caption}</i>";
+            _lightbox.SetAsLastSibling();
+            _lightbox.gameObject.SetActive(true);
+        }
+
+        public void CloseLightbox()
+        {
+            if (_lightbox != null) _lightbox.gameObject.SetActive(false);
         }
 
         TextMeshProUGUI AddText(string text, TMP_FontAsset font, float size, Color color)
@@ -848,6 +996,64 @@ namespace Nevishk
             es.AddComponent<StandaloneInputModule>();
 #endif
         }
+    }
+
+    /// <summary>Layout element whose height is a fixed fraction of the width the parent layout gives it.
+    /// Read during the vertical layout pass, after widths are set, so it never re-dirties the layout.</summary>
+    public class HeightFromWidth : UIBehaviour, ILayoutElement
+    {
+        public float ratio = 0.5625f;
+        float H
+        {
+            get
+            {
+                float w = ((RectTransform)transform).rect.width;
+                if (w <= 1f) w = T.PanelWidth - 2 * T.PanelGutter - 20f;   // before the first layout pass
+                return Mathf.Round(w * ratio);
+            }
+        }
+        public float minHeight => H;
+        public float preferredHeight => H;
+        public float flexibleHeight => -1;
+        public float minWidth => -1;
+        public float preferredWidth => -1;
+        public float flexibleWidth => -1;
+        public int layoutPriority => 2;
+        public void CalculateLayoutInputHorizontal() { }
+        public void CalculateLayoutInputVertical() { }
+        protected override void OnRectTransformDimensionsChange()
+        {
+            // Width changed (e.g. portrait ↔ landscape): ask for another pass outside the current one.
+            if (isActiveAndEnabled && !CanvasUpdateRegistry.IsRebuildingLayout())
+                LayoutRebuilder.MarkLayoutForRebuild((RectTransform)transform);
+        }
+    }
+
+    /// <summary>Crops a RawImage's texture so it covers its rect without stretching (CSS object-fit: cover).</summary>
+    public class CoverCrop : UIBehaviour
+    {
+        public Texture texture;
+        protected override void OnEnable() { base.OnEnable(); Apply(); }
+        protected override void OnRectTransformDimensionsChange() => Apply();
+        void Apply()
+        {
+            var raw = GetComponent<RawImage>();
+            var r = ((RectTransform)transform).rect;
+            if (raw == null || texture == null || r.width <= 0 || r.height <= 0) return;
+            float rectAspect = r.width / r.height, texAspect = (float)texture.width / texture.height;
+            raw.uvRect = texAspect > rectAspect
+                ? new Rect((1 - rectAspect / texAspect) / 2, 0, rectAspect / texAspect, 1)
+                : new Rect(0, (1 - texAspect / rectAspect) / 2, 1, texAspect / rectAspect);
+        }
+    }
+
+    /// <summary>Shows an outline while the pointer is over the element.</summary>
+    public class HoverEdge : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+    {
+        public Outline outline;
+        public Color on;
+        public void OnPointerEnter(PointerEventData e) { if (outline) outline.effectColor = on; }
+        public void OnPointerExit(PointerEventData e) { if (outline) outline.effectColor = new Color(0, 0, 0, 0); }
     }
 
     /// <summary>Makes &lt;link&gt; tags inside a TextMeshProUGUI clickable.</summary>

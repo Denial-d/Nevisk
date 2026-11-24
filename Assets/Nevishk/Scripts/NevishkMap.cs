@@ -144,7 +144,11 @@ namespace Nevishk
                 if (_hovered.kind == PinKind.District) SelectDistrict(_hovered.id, false);
                 else SelectLandmark(_hovered.id, false);
             }
-            if (MapInput.EscapeDown && _ui.PanelOpen) _ui.Close();
+            if (MapInput.EscapeDown)
+            {
+                if (_ui.LightboxOpen) _ui.CloseLightbox();
+                else if (_ui.PanelOpen) _ui.Close();
+            }
         }
 
         // ------------------------------------------------------------------ selection

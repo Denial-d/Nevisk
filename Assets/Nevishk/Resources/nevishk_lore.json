@@ -52,7 +52,8 @@
    "uv": [
     0.5391,
     0.1635
-   ]
+   ],
+   "images": []
   },
   {
    "id": "krasnyi_elektrovoi",
@@ -69,7 +70,8 @@
    "uv": [
     0.7266,
     0.1893
-   ]
+   ],
+   "images": []
   },
   {
    "id": "baltag",
@@ -84,7 +86,8 @@
    "uv": [
     0.7031,
     0.4819
-   ]
+   ],
+   "images": []
   },
   {
    "id": "mednye_luzhi",
@@ -99,7 +102,8 @@
    "uv": [
     0.5,
     0.6885
-   ]
+   ],
+   "images": []
   },
   {
    "id": "ushchelye",
@@ -121,6 +125,32 @@
    "uv": [
     0.3281,
     0.5852
+   ],
+   "images": [
+    {
+     "file": "ush_plity",
+     "caption": "Безмолвные плиты"
+    },
+    {
+     "file": "ush_vodopad",
+     "caption": "Водопад"
+    },
+    {
+     "file": "ush_podezd",
+     "caption": "Подъезд"
+    },
+    {
+     "file": "ush_alleya",
+     "caption": "Аллея"
+    },
+    {
+     "file": "ush_alleya2",
+     "caption": "Аллея"
+    },
+    {
+     "file": "ush_fontan",
+     "caption": "Фонтан"
+    }
    ]
   },
   {
@@ -139,6 +169,12 @@
    "uv": [
     0.2344,
     0.4303
+   ],
+   "images": [
+    {
+     "file": "nt_towers",
+     "caption": "Невишк-Тех"
+    }
    ]
   },
   {
@@ -154,7 +190,8 @@
    "uv": [
     0.3672,
     0.1635
-   ]
+   ],
+   "images": []
   },
   {
    "id": "novyi_tsentr",
@@ -171,6 +208,20 @@
    "uv": [
     0.5625,
     0.3098
+   ],
+   "images": [
+    {
+     "file": "nc_prime",
+     "caption": "Невишк Prime City"
+    },
+    {
+     "file": "nc_kofe",
+     "caption": "Кофемырлия"
+    },
+    {
+     "file": "nc_balaur",
+     "caption": "Балаур"
+    }
    ]
   },
   {
@@ -189,7 +240,8 @@
    "uv": [
     0.3945,
     0.4045
-   ]
+   ],
+   "images": []
   }
  ],
  "landmarks": [
