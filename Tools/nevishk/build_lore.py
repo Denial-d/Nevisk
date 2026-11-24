@@ -275,6 +275,12 @@ for s in mapB_list:
 
 # Landmark photos, keyed by display name so they survive id renumbering.
 LANDMARK_IMAGES = {
+    "Виброприбор": [
+        [
+            "nt_towers",
+            "Виброприбор"
+        ]
+    ],
     "Безмолвные плиты": [
         [
             "ush_plity",

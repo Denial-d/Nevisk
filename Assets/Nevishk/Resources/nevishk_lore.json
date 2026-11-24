@@ -393,7 +393,12 @@
     "doc_corporations",
     "doc_nevishk_tech"
    ],
-   "images": []
+   "images": [
+    {
+     "file": "nt_towers",
+     "caption": "Виброприбор"
+    }
+   ]
   },
   {
    "id": "lm_011",
