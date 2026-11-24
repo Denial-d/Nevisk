@@ -80,6 +80,7 @@ namespace Nevishk
             BuildGround();
             LoadPaths();
             BuildModels();
+            BuildRoads();
             BuildBlocksAndTrees();
             BuildPaths();
             BuildSpecialLandmarks();
@@ -776,6 +777,36 @@ namespace Nevishk
             return false;
         }
 
+        NevishkRoads _roads;
+
+        /// Key roads between the districts and out to the country roads (after the bridges exist, before the fill).
+        void BuildRoads()
+        {
+            if (_terrain == null) return;
+            var districts = new List<Vector3>();
+            foreach (var d in _db.districts) if (d.uv != null && d.uv.Length == 2) districts.Add(UvToWorld(d.uv));
+            var exits = new List<Vector3>();
+            if (_landscape != null)
+            {
+                var rect = _terrain.WorldRect;
+                foreach (var e in _landscape.CityExits)
+                    exits.Add(new Vector3(Mathf.Clamp(e.x, rect.xMin + 3f, rect.xMax - 3f), 0f, Mathf.Clamp(e.z, rect.yMin + 3f, rect.yMax - 3f)));
+            }
+            var bridges = new List<(Vector3, Vector3, float)>();
+            foreach (var br in _bridges) bridges.Add((br.a, br.b, br.width));
+            bool Blocked(Vector3 w)
+            {
+                float u = w.x / mapWidth + 0.5f, v = 0.5f - w.z / _mapDepth;
+                return NearModel(u, v, 3f) || NearPath(w, 3f) || InPrimeCity(w, 1f);
+            }
+            _roads = new NevishkRoads(_terrain);
+            _roads.Plan(districts, exits, bridges, Blocked, w => NearRail(w, NevishkRailroad.BedHalfWidth + 4f));
+            var asphalt = new Material(MatFor(new Color(0.20f, 0.20f, 0.21f))); asphalt.SetFloat("_Smoothness", 0.35f);   // damp
+            _roads.Build(_root, asphalt, MatFor(new Color(0.78f, 0.76f, 0.66f)));
+        }
+
+        bool NearRoad(Vector3 w, float margin) => _roads != null && _roads.Near(w, margin);
+
         void BuildBlocksAndTrees()
         {
             var asset = Resources.Load<TextAsset>("nevishk_layout");
@@ -783,14 +814,10 @@ namespace Nevishk
             var layout = MiniJson.Parse(asset.text) as Dictionary<string, object>;
             var blocks = layout["blocks"] as Dictionary<string, object>;
 
-            Mesh cube = PrimitiveMesh(PrimitiveType.Cube);
+            var fill = new NevishkFill();
+            int seed = 0;
             foreach (var kv in blocks)
             {
-                var district = _db.District(kv.Key);
-                Color concrete = NevishkTheme.Concrete;
-                Color tint = district != null ? LoreDatabase.ParseColor(district.color, concrete) : concrete;
-                Color col = Color.Lerp(concrete, tint, NevishkTheme.DistrictTint);
-                var combine = new List<CombineInstance>();
                 foreach (var o in (List<object>)kv.Value)
                 {
                     var r = (List<object>)o;
@@ -798,6 +825,7 @@ namespace Nevishk
                     if (NearModel(u, v, Mathf.Max(F(r[2]), F(r[3])) * 0.5f + 3f)) continue;   // make room for drawn buildings
                     if (InPrimeCity(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.5f)) continue;
                     if (NearRail(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + NevishkRailroad.BedHalfWidth + 3f)) continue;
+                    if (NearRoad(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 1.5f)) continue;
                     // Stand on the lowest corner so nothing floats on a slope; top stays level.
                     float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
                     float g0 = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
@@ -808,15 +836,12 @@ namespace Nevishk
                         || NearBridge(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 6f)) continue;
                     float g1 = Mathf.Max(Ground(u, v), g0);
                     float top = g1 + h;
-                    Vector3 p = UvToWorld(new[] { u, v }, (g0 + top) / 2f);
-                    combine.Add(new CombineInstance
-                    {
-                        mesh = cube,
-                        transform = Matrix4x4.TRS(p, Quaternion.Euler(0, yaw, 0), new Vector3(w, top - g0, d))
-                    });
+                    seed++;
+                    var kind = NevishkFill.Classify(kv.Key, w, d, h, seed * 7919 % 101);
+                    fill.Add(kv.Key, kind, UvToWorld(new[] { u, v }), g0, w, d, top - g0, yaw, seed * 2654435 % 9973);
                 }
-                AddCombined("Blocks · " + kv.Key, combine, col);
             }
+            fill.Finish(_root, c => MatFor(c));
 
             // Trees: low-poly cones, merged into one mesh.
             Mesh cone = ConeMesh(7);
@@ -826,6 +851,7 @@ namespace Nevishk
                 var r = (List<object>)o;
                 float s = F(r[2]), tu = F(r[0]), tv = F(r[1]);
                 if (IsWater(tu, tv) || NearModel(tu, tv, 2f) || NearRail(UvToWorld(new[] { tu, tv }), NevishkRailroad.BedHalfWidth + 4f)
+                    || NearRoad(UvToWorld(new[] { tu, tv }), 2.5f)
                     || NearPath(UvToWorld(new[] { tu, tv }), 3.5f)) continue;
                 Vector3 p = UvToWorld(new[] { tu, tv }, Ground(tu, tv) - 0.5f);
                 trees.Add(new CombineInstance

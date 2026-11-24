@@ -26,6 +26,10 @@ namespace Nevishk
         readonly List<List<Vector3>> _rivers = new List<List<Vector3>>();
         readonly List<Vector3> _villages = new List<Vector3>();
         readonly List<(Vector2 a, Vector2 b)> _roads = new List<(Vector2, Vector2)>();
+        readonly HashSet<int> _mainRoads = new HashSet<int>();
+        /// Where the main country roads reach the city terrain: the city's own roads continue from here.
+        public readonly List<Vector3> CityExits = new List<Vector3>();
+        static readonly Color Asphalt = new Color(0.30f, 0.30f, 0.30f);
 
         static readonly Color Steppe   = new Color(0.45f, 0.43f, 0.31f);   // = inner steppe #7D7A5C × TerrainTint, so the seam disappears
         static readonly Color Rock     = new Color(0.47f, 0.45f, 0.42f);
@@ -285,6 +289,26 @@ namespace Nevishk
                 }
                 _roads.Add((pv, target));
             }
+
+            // The roads that reach the city itself (no village in between) from the nearest villages become main
+            // roads: asphalt all the way to the city edge. Up to five, spread around the city.
+            var cand = new List<int>();
+            for (int r = 0; r < _roads.Count; r++)
+            {
+                var t = _roads[r].b;
+                if (DistOutside(t.x, t.y) < 1f) cand.Add(r);
+            }
+            cand.Sort((x, y) => Vector2.Distance(_roads[x].a, _roads[x].b).CompareTo(Vector2.Distance(_roads[y].a, _roads[y].b)));
+            foreach (var r in cand)
+            {
+                var t = _roads[r].b;
+                bool spaced = true;
+                foreach (var e in CityExits) if (Vector2.Distance(new Vector2(e.x, e.z), t) < 380f) { spaced = false; break; }
+                if (!spaced) continue;
+                _mainRoads.Add(r);
+                CityExits.Add(new Vector3(t.x, 0f, t.y));
+                if (CityExits.Count >= 5) break;
+            }
         }
 
         bool IsForest(float x, float z) => Mathf.PerlinNoise(x * 0.0026f + 50f, z * 0.0026f + 50f) > 0.64f && DistOutside(x, z) > 120f;
@@ -358,7 +382,12 @@ namespace Nevishk
                 px[y * TexSize + x] = GroundColour(wx, wz);
             }
             // Country roads.
-            foreach (var (a, b) in _roads) PaintLine(px, a, b, Road, 1.6f, true);
+            for (int r = 0; r < _roads.Count; r++)
+            {
+                var (a, b) = _roads[r];
+                bool main = _mainRoads.Contains(r);
+                PaintLine(px, a, b, main ? Asphalt : Road, main ? 1.2f : 1.6f, !main);
+            }
             tex.SetPixels32(px);
             tex.Apply(true);
             return tex;
