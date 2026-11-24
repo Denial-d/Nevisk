@@ -411,6 +411,12 @@ namespace Nevishk
 
         void BuildModels()
         {
+            // Let spread-out structures (parks, streets, embankments) put each piece on the real ground.
+            if (_terrain != null)
+            {
+                NevishkBuildings.GroundAt = p => _terrain.HeightAtWorld(p);
+                NevishkBuildings.IsWet = p => !float.IsNaN(_terrain.WaterAtWorld(p));
+            }
             var root = new GameObject("Buildings").transform;
             root.SetParent(_root, false);
             int seed = 11;

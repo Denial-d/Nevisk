@@ -26,6 +26,11 @@ namespace Nevishk
 
         public struct Result { public GameObject root; public float height; public float radius; }
 
+        /// Terrain access for structures that spread over the ground (parks, streets, embankments):
+        /// height at a world point, and whether it is water. Set by NevishkMap before building.
+        public static Func<Vector3, float> GroundAt;
+        public static Func<Vector3, bool> IsWet;
+
         /// <param name="mat">Returns a shared material for a colour and smoothness.</param>
         public static Result Build(string type, Transform parent, Vector3 basePos, float w, float d, float yaw,
                                    Func<Color, float, Material> mat, int seed)
@@ -408,13 +413,15 @@ namespace Nevishk
 
         static float Alley(Kit k, float w, float d, bool street)
         {
-            k.Box(Vector3.zero, new Vector3(w, 0.15f, street ? d * 0.7f : 3.2f), street ? DarkConc : Stone);   // path / road
+            k.Strip(-w / 2, w / 2, 0f, street ? d * 0.7f : 3.2f, 0.15f, street ? DarkConc : Stone);   // path / road
             for (float x = -w / 2 + 3; x <= w / 2 - 3; x += street ? 9f : 7f)
             {
-                k.Lamp(new Vector3(x, 0, d / 2), 4.5f);
-                k.Lamp(new Vector3(x + 3.5f, 0, -d / 2), 4.5f);
-                if (!street) k.Box(new Vector3(x + 1.7f, 0, d / 2 - 0.9f), new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
-                else k.Spire(new Vector3(x + 1.7f, 0, d / 2 + 1.8f), 1.6f, 5f, Leaf);           // street trees
+                k.LampOnGround(new Vector3(x, 0, d / 2), 4.5f);
+                k.LampOnGround(new Vector3(x + 3.5f, 0, -d / 2), 4.5f);
+                var extra = new Vector3(x + 1.7f, 0, street ? d / 2 + 1.8f : d / 2 - 0.9f);
+                if (!k.Ground(ref extra)) continue;
+                if (!street) k.Box(extra, new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
+                else k.Spire(extra, 1.6f, 5f, Leaf);                                             // street trees
             }
             return 5f;
         }
@@ -598,12 +605,13 @@ namespace Nevishk
 
         static float Embankment(Kit k, float w, float d)
         {
-            k.Box(Vector3.zero, new Vector3(w, 0.2f, d * 0.6f), Stone);
-            k.Box(new Vector3(0, 0.2f, -d * 0.3f), new Vector3(w, 1.1f, 0.3f), Rail);               // railing
+            k.Strip(-w / 2, w / 2, 0f, d * 0.6f, 0.2f, Stone);
+            k.Strip(-w / 2, w / 2, -d * 0.3f, 0.3f, 1.3f, Rail);                                       // railing
             for (float x = -w / 2 + 4; x <= w / 2 - 4; x += 8f)
             {
-                k.Lamp(new Vector3(x, 0, -d * 0.3f + 0.6f), 4.5f);
-                k.Box(new Vector3(x + 4, 0, d * 0.15f), new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
+                k.LampOnGround(new Vector3(x, 0, -d * 0.3f + 0.6f), 4.5f);
+                var bench = new Vector3(x + 4, 0, d * 0.15f);
+                if (k.Ground(ref bench)) k.Box(bench, new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
             }
             return 5f;
         }
@@ -662,11 +670,12 @@ namespace Nevishk
         {
             for (int i = 0; i < 14; i++)
             {
-                float x = k.Range(-w / 2, w / 2), z = k.Range(-d / 2, d / 2);
-                k.Spire(new Vector3(x, 0, z), k.Range(2f, 3f), k.Range(6f, 10f), Leaf);
+                var p = new Vector3(k.Range(-w / 2, w / 2), 0, k.Range(-d / 2, d / 2));
+                float r = k.Range(2f, 3f), hgt = k.Range(6f, 10f);
+                if (k.Ground(ref p)) k.Spire(p, r, hgt, Leaf);                                    // never in the water
             }
-            k.Box(Vector3.zero, new Vector3(w, 0.12f, 3f), Stone);
-            for (float x = -w / 2 + 6; x < w / 2; x += 12f) k.Lamp(new Vector3(x, 0, 2.2f), 4f);
+            k.Strip(-w / 2, w / 2, 0f, 3f, 0.12f, Stone);
+            for (float x = -w / 2 + 6; x < w / 2; x += 12f) k.LampOnGround(new Vector3(x, 0, 2.2f), 4f);
             return 10f;
         }
 
@@ -713,6 +722,34 @@ namespace Nevishk
                 => Part(UnitSphere, centre, size, Quaternion.identity, c, 0.1f);
 
             /// Street lamp: thin post with a small glowing head.
+            /// Drop a local point onto the terrain (keeps x, z). False if it lands in water or there is no terrain info.
+            public bool Ground(ref Vector3 local)
+            {
+                if (GroundAt == null) return true;
+                Vector3 world = _root.TransformPoint(new Vector3(local.x, 0f, local.z));
+                if (IsWet != null && IsWet(world)) return false;
+                local.y = GroundAt(world) - _root.position.y;
+                return true;
+            }
+
+            public void LampOnGround(Vector3 local, float height)
+            {
+                if (Ground(ref local)) Lamp(local, height);
+            }
+
+            /// A path or kerb laid along local x in short segments that follow the ground and stop at water.
+            public void Strip(float x0, float x1, float z, float width, float thick, Color c)
+            {
+                const float seg = 5f;
+                for (float x = x0; x < x1 - 0.01f; x += seg)
+                {
+                    float len = Mathf.Min(seg, x1 - x);
+                    var p = new Vector3(x + len / 2, 0, z);
+                    if (!Ground(ref p)) continue;
+                    Box(p - Vector3.up * 0.05f, new Vector3(len + 0.3f, thick + 0.05f, width), c);
+                }
+            }
+
             public void Lamp(Vector3 bottom, float height)
             {
                 Part(UnitCylinder, bottom + Vector3.up * height / 2, new Vector3(0.25f, height / 2, 0.25f), Quaternion.identity, Rail, 0.3f);
@@ -761,7 +798,7 @@ namespace Nevishk
         static Mesh _sphere;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetStatics() { _cube = _cyl = _prism = _cone = _sphere = null; }   // rebuilt each Play
+        static void ResetStatics() { _cube = _cyl = _prism = _cone = _sphere = null; GroundAt = null; IsWet = null; }   // rebuilt each Play
         static Mesh UnitSphere => _sphere != null ? _sphere : (_sphere = Primitive(PrimitiveType.Sphere));
 
         static Mesh Primitive(PrimitiveType t)

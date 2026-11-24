@@ -65,8 +65,9 @@ namespace Nevishk
 
             BuildHeader();
             if (!_portrait) BuildLegend();
-            BuildDistrictBar();
             BuildPanel();
+            BuildDistrictBar();
+            SetDrawer(false, true);
             BuildTooltip();
             _panel.gameObject.SetActive(false);
         }
@@ -147,7 +148,7 @@ namespace Nevishk
         IEnumerator AnimatePanel(bool open)
         {
             _panel.gameObject.SetActive(true);
-            Vector2 home = _portrait ? new Vector2(0, 0) : new Vector2(0, T.BarHeight / 2f);
+            Vector2 home = Vector2.zero;
             Vector2 away = home + (_portrait ? new Vector2(0, -120) : new Vector2(80, 0));
             float dur = ReducedMotion ? 0f : open ? 0.22f : 0.15f;
             for (float t = 0; t < dur; t += Time.unscaledDeltaTime)
@@ -500,34 +501,92 @@ namespace Nevishk
             return input;
         }
 
+        // ---- legend: collapsible, closed by default
+        RectTransform _legend, _legendItems, _legendArrow;
+        bool _legendOpen;
+
         void BuildLegend()
         {
-            var legend = NewRect("Legend", _canvasRect);
-            legend.anchorMin = legend.anchorMax = legend.pivot = new Vector2(0, 0);
-            legend.anchoredPosition = new Vector2(T.S3, T.BarHeight + T.S2);
-            legend.gameObject.AddComponent<Image>().color = T.Scrim;
-            var v = legend.gameObject.AddComponent<VerticalLayoutGroup>();
-            v.padding = new RectOffset(16, 16, 12, 12); v.spacing = 4; v.childControlHeight = v.childControlWidth = true;
+            _legend = NewRect("Legend", _canvasRect);
+            _legend.anchorMin = _legend.anchorMax = _legend.pivot = new Vector2(0, 0);
+            _legend.anchoredPosition = new Vector2(T.S3, T.S2);
+            _legend.gameObject.AddComponent<Image>().color = T.Scrim;
+            var v = _legend.gameObject.AddComponent<VerticalLayoutGroup>();
+            v.padding = new RectOffset(0, 0, 0, 8); v.spacing = 0; v.childControlHeight = v.childControlWidth = true;
             v.childForceExpandHeight = false;
-            var fit = legend.gameObject.AddComponent<ContentSizeFitter>();
+            var fit = _legend.gameObject.AddComponent<ContentSizeFitter>();
             fit.horizontalFit = fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var head = NewText("Title", legend, "ЛЕГЕНДА", NevishkFonts.UIBold, 12, T.TextMuted);
-            head.characterSpacing = T.KickerTracking;
+            // Header button: "ЛЕГЕНДА ›" — the arrow turns to show open/closed.
+            var head = new GameObject("Header", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement), typeof(HorizontalLayoutGroup));
+            head.transform.SetParent(_legend, false);
+            head.GetComponent<Image>().color = new Color(0, 0, 0, 0.001f);
+            head.GetComponent<LayoutElement>().minHeight = T.TouchTarget;
+            var hl = head.GetComponent<HorizontalLayoutGroup>();
+            hl.padding = new RectOffset(16, 14, 0, 0); hl.spacing = 10; hl.childAlignment = TextAnchor.MiddleLeft;
+            hl.childControlWidth = hl.childControlHeight = true; hl.childForceExpandWidth = false;
+            var title = NewText("Title", head.transform, "ЛЕГЕНДА", NevishkFonts.UIBold, 12, T.TextMuted);
+            title.characterSpacing = T.KickerTracking; title.alignment = TextAlignmentOptions.MidlineLeft;
+            var arrow = NewText("Arrow", head.transform, "›", NevishkFonts.UIBold, 22, T.TextMuted);
+            arrow.alignment = TextAlignmentOptions.Center;
+            arrow.gameObject.AddComponent<LayoutElement>().preferredWidth = 16;
+            _legendArrow = arrow.rectTransform;
+            head.GetComponent<Button>().onClick.AddListener(() => SetLegend(!_legendOpen));
+
+            _legendItems = NewRect("Items", _legend);
+            var iv = _legendItems.gameObject.AddComponent<VerticalLayoutGroup>();
+            iv.padding = new RectOffset(16, 16, 0, 4); iv.spacing = 4; iv.childControlHeight = iv.childControlWidth = true;
+            iv.childForceExpandHeight = false;
             foreach (var c in _db.categories)
             {
                 var col = NevishkColors.ForCategory(_db, c.id);
-                NewText(c.name, legend, $"<size=150%><color={T.ToHex(col)}>•</color></size>  {c.name}", NevishkFonts.UI, 15, T.Text);
+                NewText(c.name, _legendItems, $"<size=150%><color={T.ToHex(col)}>•</color></size>  {c.name}", NevishkFonts.UI, 15, T.Text);
             }
-            NewText("Lore", legend, $"<b><color={T.ToHex(T.Accent)}>|</color></b>   жёлтый шест — есть лор", NevishkFonts.UI, 15, T.TextMuted);
+            NewText("Lore", _legendItems, $"<b><color={T.ToHex(T.Accent)}>|</color></b>   жёлтый шест — есть лор", NevishkFonts.UI, 15, T.TextMuted);
+            SetLegend(false);
         }
+
+        void SetLegend(bool open)
+        {
+            _legendOpen = open;
+            _legendItems.gameObject.SetActive(open);
+            _legendArrow.localEulerAngles = new Vector3(0, 0, open ? -90f : 0f);   // › closed, pointing down when open
+        }
+
+        // ---- districts: a drawer hidden below the screen edge, opened by a tab with an arrow
+        RectTransform _drawer, _drawerArrow;
+        bool _drawerOpen;
+        Coroutine _drawerAnim;
+        const float TabHeight = 30f;
 
         void BuildDistrictBar()
         {
-            var bar = NewRect("District Bar", _canvasRect);
-            bar.anchorMin = new Vector2(0, 0); bar.anchorMax = new Vector2(1, 0); bar.pivot = new Vector2(0.5f, 0);
-            bar.sizeDelta = new Vector2(0, T.BarHeight); bar.anchoredPosition = Vector2.zero;
+            _drawer = NewRect("District Drawer", _canvasRect);
+            _drawer.anchorMin = new Vector2(0, 0); _drawer.anchorMax = new Vector2(1, 0); _drawer.pivot = new Vector2(0.5f, 0);
+            _drawer.sizeDelta = new Vector2(0, T.BarHeight);
+            var bar = _drawer;
             bar.gameObject.AddComponent<Image>().color = T.Scrim;
+
+            // The tab that sticks up from the drawer: "Районы" and an arrow.
+            var tab = new GameObject("Tab", typeof(RectTransform), typeof(Image), typeof(Button), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
+            tab.transform.SetParent(_drawer, false);
+            var tr = (RectTransform)tab.transform;
+            tr.anchorMin = tr.anchorMax = new Vector2(0.5f, 1); tr.pivot = new Vector2(0.5f, 0);
+            tr.anchoredPosition = Vector2.zero;
+            StyleButton(tab.GetComponent<Button>(), tab.GetComponent<Image>());
+            var tc = tab.GetComponent<Button>().colors; tc.normalColor = T.Scrim; tab.GetComponent<Button>().colors = tc;
+            var tl = tab.GetComponent<HorizontalLayoutGroup>();
+            tl.padding = new RectOffset(18, 18, 2, 2); tl.spacing = 8; tl.childAlignment = TextAnchor.MiddleCenter;
+            tl.childControlWidth = tl.childControlHeight = true; tl.childForceExpandWidth = false;
+            tab.GetComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            tr.sizeDelta = new Vector2(0, TabHeight);
+            var arrow = NewText("Arrow", tab.transform, "›", NevishkFonts.UIBold, 24, T.Text);
+            arrow.alignment = TextAlignmentOptions.Center;
+            arrow.gameObject.AddComponent<LayoutElement>().preferredWidth = 16;
+            _drawerArrow = arrow.rectTransform;
+            var label = NewText("Label", tab.transform, "Районы", NevishkFonts.UI, 15, T.Text);
+            label.alignment = TextAlignmentOptions.MidlineLeft;
+            tab.GetComponent<Button>().onClick.AddListener(() => SetDrawer(!_drawerOpen, false));
 
             var scroll = bar.gameObject.AddComponent<ScrollRect>();
             scroll.horizontal = true; scroll.vertical = false; scroll.movementType = ScrollRect.MovementType.Clamped;
@@ -567,18 +626,49 @@ namespace Nevishk
             }
         }
 
+        /// Open/close the district drawer (slides up from the bottom edge; instant under reduced motion).
+        void SetDrawer(bool open, bool instant)
+        {
+            _drawerOpen = open;
+            _drawerArrow.localEulerAngles = new Vector3(0, 0, open ? -90f : 90f);   // ↑ to open, ↓ to close
+            if (_drawerAnim != null) StopCoroutine(_drawerAnim);
+            float target = open ? 0f : -T.BarHeight;
+            if (instant || ReducedMotion) { PlaceDrawer(target); return; }
+            _drawerAnim = StartCoroutine(SlideDrawer(target));
+        }
+
+        IEnumerator SlideDrawer(float target)
+        {
+            float start = _drawer.anchoredPosition.y, dur = 0.2f;
+            for (float t = 0; t < dur; t += Time.unscaledDeltaTime)
+            {
+                float k = 1f - Mathf.Pow(1f - t / dur, 3f);
+                PlaceDrawer(Mathf.Lerp(start, target, k));
+                yield return null;
+            }
+            PlaceDrawer(target);
+            _drawerAnim = null;
+        }
+
+        void PlaceDrawer(float y)
+        {
+            _drawer.anchoredPosition = new Vector2(0, y);
+            // The legend rides just above the drawer (and its tab), so they never overlap.
+            if (_legend != null) _legend.anchoredPosition = new Vector2(T.S3, T.BarHeight + y + T.S2);
+        }
+
         void BuildPanel()
         {
             _panel = NewRect("Lore Panel", _canvasRect);
             if (_portrait)
             {
                 _panel.anchorMin = new Vector2(0, 0); _panel.anchorMax = new Vector2(1, 0.64f);
-                _panel.offsetMin = new Vector2(0, T.BarHeight); _panel.offsetMax = Vector2.zero;
+                _panel.offsetMin = Vector2.zero; _panel.offsetMax = Vector2.zero;
             }
             else
             {
                 _panel.anchorMin = new Vector2(1, 0); _panel.anchorMax = new Vector2(1, 1); _panel.pivot = new Vector2(1, 0.5f);
-                _panel.sizeDelta = new Vector2(T.PanelWidth, -T.BarHeight); _panel.anchoredPosition = new Vector2(0, T.BarHeight / 2f);
+                _panel.sizeDelta = new Vector2(T.PanelWidth, 0); _panel.anchoredPosition = Vector2.zero;
             }
             _panel.gameObject.AddComponent<Image>().color = T.Surface;
             _panelGroup = _panel.gameObject.AddComponent<CanvasGroup>();
