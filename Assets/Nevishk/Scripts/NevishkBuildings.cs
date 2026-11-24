@@ -79,6 +79,7 @@ namespace Nevishk
                 "park"       => Park(kit, w, d),
                 "statue"     => Statue(kit, w, d),
                 "checkpoint_bridge" => CheckpointOnBridge(kit, w, d),
+                "depot_through" => DepotThrough(kit, w, d),
                 "arch"       => Arch(kit, w, d),
                 _          => kit.Box(Vector3.zero, new Vector3(w, 8, d), Concrete),
             };
@@ -258,7 +259,7 @@ namespace Nevishk
         static readonly Color FoundationStone = new Color(0.46f, 0.44f, 0.40f);
         public static bool NeedsFoundation(string type) => type switch
         {
-            "bridge" => false, "checkpoint_bridge" => false, "street" => false, "alley" => false, "arch" => false,
+            "bridge" => false, "checkpoint_bridge" => false, "depot_through" => false, "street" => false, "alley" => false, "arch" => false,
             "embankment" => false, "park" => false, "cave" => false, "tunnel" => false, "firepit" => false,
             "spillway" => false, "slabs" => false, "ruin" => false, "shed" => false,
             _ => true,
@@ -332,6 +333,28 @@ namespace Nevishk
             k.Box(new Vector3(0.5f, 1.1f, -1.8f), new Vector3(w - 6f, 0.22f, 0.22f), RedWhite);   // barrier arm across the road
             k.Box(new Vector3(half - 1.2f, 0, -1.8f), new Vector3(0.4f, 1.3f, 0.4f), DarkConc);
             return 3.4f;
+        }
+
+        /// Engine shed the railway runs straight through (local x = along the track): two side walls and a
+        /// barrel roof, open at both ends.
+        static float DepotThrough(Kit k, float w, float d)
+        {
+            float half = d / 2f, wallH = 6f;
+            foreach (float s in new[] { -1f, 1f })
+                k.Box(new Vector3(0, -2f, s * (half - 0.5f)), new Vector3(w, wallH + 2f, 1f), Brick);
+            // Barrel roof from planks around a half circle over the walls.
+            const int planks = 9;
+            for (int i = 0; i < planks; i++)
+            {
+                float a = Mathf.PI * (i + 0.5f) / planks;                       // 0..π from one wall to the other
+                float seg = Mathf.PI * half / planks;
+                var centre = new Vector3(0, wallH + Mathf.Sin(a) * half, Mathf.Cos(a) * half);
+                k.BoxRotated(centre, new Vector3(w, 0.45f, seg + 0.15f), Quaternion.Euler(a * Mathf.Rad2Deg - 90f, 0, 0), DarkConc);
+            }
+            // Dark interior gable rims at each end, so the openings read as doorways.
+            foreach (float s in new[] { -1f, 1f })
+                k.BoxRotated(new Vector3(s * (w / 2 - 0.2f), wallH + half * 0.95f, 0), new Vector3(0.4f, 0.6f, d * 0.6f), Quaternion.identity, Rail);
+            return wallH + half;
         }
 
         /// Old rusty arch over a path (Аллея «Память»: «По краям аллеи стояли старые арки»).
@@ -682,6 +705,9 @@ namespace Nevishk
 
             public GameObject Cylinder(Vector3 bottom, float radius, float height, Color c, float smooth = 0.1f)
                 => Part(UnitCylinder, bottom + Vector3.up * height / 2, new Vector3(radius * 2, height / 2, radius * 2), Quaternion.identity, c, smooth);
+
+            public void BoxRotated(Vector3 centre, Vector3 size, Quaternion rot, Color c, float smooth = 0.1f)
+                => Part(UnitCube, centre, size, rot, c, smooth);
 
             public void Sphere(Vector3 centre, Vector3 size, Color c)
                 => Part(UnitSphere, centre, size, Quaternion.identity, c, 0.1f);

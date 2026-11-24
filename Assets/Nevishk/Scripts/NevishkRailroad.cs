@@ -113,6 +113,25 @@ namespace Nevishk
             terrain.FlattenAlong(P, skip, BedHalfWidth, 8f, 0.2f);
         }
 
+        /// Closest point on the line (with its level) and the direction of travel there.
+        public float Closest(Vector3 w, out Vector3 point, out Vector3 tangent)
+        {
+            float best = float.MaxValue; point = w; tangent = Vector3.right;
+            var q = new Vector2(w.x, w.z);
+            for (int i = 0; i + 1 < P.Count; i++)
+            {
+                Vector2 a = new Vector2(P[i].x, P[i].z), ab = new Vector2(P[i + 1].x - a.x, P[i + 1].z - a.y);
+                float t = Mathf.Clamp01(Vector2.Dot(q - a, ab) / Mathf.Max(ab.sqrMagnitude, 1e-6f));
+                float d = Vector2.Distance(q, a + ab * t);
+                if (d < best)
+                {
+                    best = d; point = Vector3.Lerp(P[i], P[i + 1], t);
+                    tangent = new Vector3(ab.x, 0, ab.y).normalized;
+                }
+            }
+            return best;
+        }
+
         /// Horizontal distance from a world point to the line.
         public float DistanceXZ(Vector3 w)
         {

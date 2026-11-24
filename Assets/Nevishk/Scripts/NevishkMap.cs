@@ -415,24 +415,37 @@ namespace Nevishk
             root.SetParent(_root, false);
             int seed = 11;
 
-            // 1. Buildings drawn on the base map.
+            // Bridges go first, so every building after them can keep clear of the decks.
+            var drawn = new List<Dictionary<string, object>>();
             var asset = Resources.Load<TextAsset>("nevishk_models");
             if (asset != null)
                 foreach (var o in (MiniJson.Parse(asset.text) as Dictionary<string, object>)["models"] as List<object>)
+                    drawn.Add((Dictionary<string, object>)o);
+            foreach (bool bridges in new[] { true, false })
+            {
+                // 1. Buildings drawn on the base map.
+                foreach (var m in drawn)
                 {
-                    var m = (Dictionary<string, object>)o;
+                    if (((string)m["type"] == "bridge") != bridges) continue;
                     var uv = (List<object>)m["uv"]; var size = (List<object>)m["size"];
                     PlaceAndBuild(root, (string)m["type"], F(uv[0]), F(uv[1]), PxToWorld(F(size[0])), PxToWorld(F(size[1])),
                                   F(m["yaw"]), true, (string)m["label"], (string)m["landmark"], seed++);
                 }
+                // 2. A structure for every other place (checkpoints, bridges, the fountain, power plants…).
+                foreach (var l in _db.landmarks)
+                {
+                    if (_modelByLandmark.ContainsKey(l.id)) continue;
+                    var spec0 = NevishkBuildings.ForLandmark(l.name);
+                    if (spec0 == null || (spec0.Value.type == "bridge") != bridges) continue;
+                    BuildForLandmark(root, l, spec0.Value, ref seed);
+                }
+            }
+        }
 
-            // 2. A structure for every other place (checkpoints, bridges, the fountain, power plants…).
-            foreach (var l in _db.landmarks)
+        void BuildForLandmark(Transform root, LandmarkInfo l, (string type, float w, float d) spec, ref int seed)
+        {
             {
-                if (_modelByLandmark.ContainsKey(l.id)) continue;
-                var spec = NevishkBuildings.ForLandmark(l.name);
-                if (spec == null) continue;
-                var (type, wPx, dPx) = spec.Value;
+                var (type, wPx, dPx) = spec;
                 int hash = 0; foreach (char ch in l.id + l.name) hash = hash * 31 + ch;
                 hash &= 0x7fffffff;
                 float yaw = (hash % 4) * 90f + (hash / 4 % 21 - 10);
@@ -443,7 +456,7 @@ namespace Nevishk
                     Vector3 p = Vector3.Lerp(br.a, br.b, Mathf.Clamp(t, 0.2f, 0.8f));
                     var cb = NevishkBuildings.Build("checkpoint_bridge", root, p, br.width, 4f, br.yaw + 90f, MatFor, seed++);
                     Register(l.id, l.uv[0], l.uv[1], p, cb, 6f, l.name);
-                    continue;
+                    return;
                 }
                 PlaceAndBuild(root, type, l.uv[0], l.uv[1], PxToWorld(wPx), PxToWorld(dPx), yaw, false, l.name, l.id, seed++);
             }
@@ -490,6 +503,15 @@ namespace Nevishk
             {
                 pos = OnGround(new[] { u, v }, -0.1f);
             }
+            else if (type == "depot" && _rail != null && _rail.Closest(UvToWorld(new[] { u, v }), out var railPt, out var railDir) < 30f)
+            {
+                // A depot on the line: centred on the track, lined up with it, open at both ends.
+                type = "depot_through";
+                yaw = -Mathf.Atan2(railDir.z, railDir.x) * Mathf.Rad2Deg;
+                w = Mathf.Max(w, 30f); d = 13f;
+                pos = new Vector3(railPt.x, railPt.y - 0.2f, railPt.z);
+                u = railPt.x / mapWidth + 0.5f; v = 0.5f - railPt.z / _mapDepth;
+            }
             else
             {
                 MoveToDry(ref u, ref v, w, d);
@@ -534,17 +556,32 @@ namespace Nevishk
             return found;
         }
 
-        /// A footprint is buildable if none of it is water and it isn't down at river level.
+        /// A footprint is buildable if none of it (plus a small margin) is water, a bridge or the railway.
         bool FootprintDry(float u, float v, float w, float d)
         {
-            float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
+            float du = (w * 0.5f + 3f) / mapWidth, dv = (d * 0.5f + 3f) / _mapDepth;
             for (int i = -1; i <= 1; i++)
             for (int j = -1; j <= 1; j++)
-            {
-                float uu = u + i * du, vv = v + j * dv;
-                if (IsWater(uu, vv) || Ground(uu, vv) < 0.6f) return false;
-            }
+                if (IsWater(u + i * du, v + j * dv)) return false;
+            Vector3 c = UvToWorld(new[] { u, v });
+            float r = Mathf.Max(w, d) * 0.5f;
+            foreach (var br in _bridges)
+                if (SegmentDistance(c, br.a, br.b) < r + br.width * 0.5f + 3f) return false;
+            if (NearRail(c, r + NevishkRailroad.BedHalfWidth + 2f)) return false;
             return true;
+        }
+
+        bool NearBridge(Vector3 w, float margin)
+        {
+            foreach (var br in _bridges) if (SegmentDistance(w, br.a, br.b) < margin + br.width * 0.5f) return true;
+            return false;
+        }
+
+        static float SegmentDistance(Vector3 p, Vector3 a, Vector3 b)
+        {
+            Vector2 A = new Vector2(a.x, a.z), AB = new Vector2(b.x - a.x, b.z - a.z), P = new Vector2(p.x, p.z);
+            float t = Mathf.Clamp01(Vector2.Dot(P - A, AB) / Mathf.Max(AB.sqrMagnitude, 1e-6f));
+            return Vector2.Distance(P, A + AB * t);
         }
 
         /// If the footprint touches water, move it to the nearest dry spot (up to 90 m away).
@@ -678,14 +715,23 @@ namespace Nevishk
                 for (int s = mid + 3; s < nS; s++) rightTop = Mathf.Max(rightTop, prof[s]);
                 float bank = Mathf.Min(leftTop, rightTop), gap = bank - low;
                 if (gap <= bestGap) continue;
+                if (low > -3f && gap < 10f) continue;      // must cross water (or a deep gap like the ravine), not a dip
                 // Ends: walk out from the middle until the ground is back up near the bank height.
                 int l = mid, r = mid;
                 while (l > 0 && prof[l] < bank - 1f) l--;
                 while (r < nS - 1 && prof[r] < bank - 1f) r++;
-                bestGap = gap; found = true;
                 float t0 = -R + l * step, t1 = -R + r * step;
-                length = Mathf.Clamp(t1 - t0 + 8f, 16f, 150f);
-                centre = UvToWorld(new[] { u, v }) + dir * ((t0 + t1) * 0.5f);
+                float len = Mathf.Clamp(t1 - t0 + 8f, 16f, 150f);
+                Vector3 c = UvToWorld(new[] { u, v }) + dir * ((t0 + t1) * 0.5f);
+                // Prefer the shortest crossing (square to the river), and keep 25 m from other bridges.
+                if (found && len >= length) continue;
+                Vector3 ea = c - dir * len / 2, eb = c + dir * len / 2;
+                bool clash = false;
+                foreach (var br in _bridges)
+                    for (int q = 0; q <= 10 && !clash; q++)
+                        if (SegmentDistance(Vector3.Lerp(ea, eb, q / 10f), br.a, br.b) < 25f) clash = true;
+                if (clash) continue;
+                found = true; length = len; centre = c;
                 deckY = Mathf.Max(prof[l], prof[r]) + 0.8f;
                 yaw = -deg;   // root's local x runs along the bridge
             }
@@ -732,7 +778,8 @@ namespace Nevishk
                                          Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv))) - 0.5f;
                     // Never on the water or the river bank, never on a path.
                     if (IsWater(u, v) || IsWater(u - du, v - dv) || IsWater(u + du, v - dv) || IsWater(u - du, v + dv) || IsWater(u + du, v + dv)
-                        || g0 < 0.4f || NearPath(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 2f)) continue;
+                        || g0 < 0.4f || NearPath(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 2f)
+                        || NearBridge(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 6f)) continue;
                     float g1 = Mathf.Max(Ground(u, v), g0);
                     float top = g1 + h;
                     Vector3 p = UvToWorld(new[] { u, v }, (g0 + top) / 2f);
