@@ -1018,6 +1018,9 @@ namespace Nevishk
         public float minWidth => -1;
         public float preferredWidth => -1;
         public float flexibleWidth => -1;
+        // uGUI 2.x (Unity 6.x) added max sizes to ILayoutElement; harmless extra members on older versions.
+        public float maxWidth => -1;
+        public float maxHeight => -1;
         public int layoutPriority => 2;
         public void CalculateLayoutInputHorizontal() { }
         public void CalculateLayoutInputVertical() { }
