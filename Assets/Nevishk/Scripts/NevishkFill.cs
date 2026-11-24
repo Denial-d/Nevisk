@@ -174,9 +174,10 @@ namespace Nevishk
             b.v.Add(a); b.v.Add(c1); b.v.Add(c2); b.v.Add(c3);
             for (int i = 0; i < 4; i++) b.n.Add(n);
             b.uv.Add(ua); b.uv.Add(ub); b.uv.Add(uc); b.uv.Add(ud);
-            // Wind so the face points along n.
-            if (Vector3.Dot(Vector3.Cross(c1 - a, c2 - a), n) >= 0f) { b.t.Add(k); b.t.Add(k + 2); b.t.Add(k + 1); b.t.Add(k); b.t.Add(k + 3); b.t.Add(k + 2); }
-            else { b.t.Add(k); b.t.Add(k + 1); b.t.Add(k + 2); b.t.Add(k); b.t.Add(k + 2); b.t.Add(k + 3); }
+            // Wind so the face points along n. Unity's front face is the one whose normal is cross(b - a, c - a),
+            // so (a, c1, c2) faces n exactly when that cross product points along n.
+            if (Vector3.Dot(Vector3.Cross(c1 - a, c2 - a), n) >= 0f) { b.t.Add(k); b.t.Add(k + 1); b.t.Add(k + 2); b.t.Add(k); b.t.Add(k + 2); b.t.Add(k + 3); }
+            else { b.t.Add(k); b.t.Add(k + 2); b.t.Add(k + 1); b.t.Add(k); b.t.Add(k + 3); b.t.Add(k + 2); }
         }
 
         /// Creates the meshes. `mat(colour)` gives a lit material for plain colours.
