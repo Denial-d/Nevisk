@@ -58,7 +58,7 @@ namespace Nevishk
             m.SetFloat("_RingCorner", 120f);   // how far the edge wanders in and out (m)
             m.SetVector("_Extent", new Vector4(outer.x, outer.y, top, bottom));
             m.SetFloat("_Height", 45f);
-            m.SetFloat("_WallHeight", 140f);
+            m.SetFloat("_WallHeight", 55f);   // how tall the bank around the city stands (scale height, m)
 
             var go = new GameObject("Fog Zone", typeof(MeshFilter), typeof(MeshRenderer));
             go.transform.SetParent(parent, false);

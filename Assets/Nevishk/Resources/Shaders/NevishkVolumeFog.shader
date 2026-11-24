@@ -96,8 +96,9 @@ Shader "Nevishk/VolumeFog"
             float Density(float3 p, float t)
             {
                 float sdf = RingDistance(p.xz, t);
-                // Clear inside; a bank centred ~110 m outside the oval; murk out beyond it.
-                float wall = exp(-pow((sdf - 110.0) / 95.0, 2.0));
+                // Clear inside; the bank rises quickly at the oval's edge, then thins out gradually over the
+                // next kilometre or so instead of ending in a band; patchy murk takes over beyond it.
+                float wall = smoothstep(-30.0, 90.0, sdf) * exp(-max(sdf - 90.0, 0.0) / 520.0);
                 float murk = smoothstep(60.0, 420.0, sdf);
                 if (murk > 0.002)
                 {
