@@ -542,7 +542,11 @@ namespace Nevishk
                 var col = NevishkColors.ForCategory(_db, c.id);
                 NewText(c.name, _legendItems, $"<size=150%><color={T.ToHex(col)}>•</color></size>  {c.name}", NevishkFonts.UI, 15, T.Text);
             }
-            NewText("Lore", _legendItems, $"<b><color={T.ToHex(T.Accent)}>|</color></b>   жёлтый шест — есть лор", NevishkFonts.UI, 15, T.TextMuted);
+            // Nearly every place is a building now, so explain how to read them instead of the old pin colour.
+            string how = Application.isMobilePlatform
+                ? "Нажмите на здание — откроется история места"
+                : "Наведите на здание — его название,\nнажмите — откроется история места";
+            NewText("How", _legendItems, $"<i>{how}</i>", NevishkFonts.UI, 14, T.TextMuted);
             SetLegend(false);
         }
 
