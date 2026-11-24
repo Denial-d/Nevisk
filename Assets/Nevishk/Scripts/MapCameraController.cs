@@ -73,11 +73,23 @@ namespace Nevishk
             return EventSystem.current.IsPointerOverGameObject();
         }
 
+        bool _reportedError, _reportedNaN;
+        string _lastBlock = "";
+
         void Update()
         {
-            HandleTouch();
-            if (MapInput.TouchCount == 0) HandleMouse();
+            try
+            {
+                HandleTouch();
+                if (MapInput.TouchCount == 0) HandleMouse();
+            }
+            catch (System.Exception e)
+            {
+                // Never let an input error freeze the camera; report it once.
+                if (!_reportedError) { _reportedError = true; Debug.LogError("[Nevishk] Camera input error (camera keeps running): " + e); }
+            }
             ClampTargets();
+            GuardAgainstNaN();
 
             float k = 1f - Mathf.Exp(-smoothing * Time.unscaledDeltaTime);
             focus = Vector3.Lerp(focus, _focusT, k);
@@ -85,6 +97,47 @@ namespace Nevishk
             yaw = Mathf.LerpAngle(yaw, _yawT, k);
             pitch = Mathf.Lerp(pitch, _pitchT, k);
             Apply();
+
+#if ENABLE_INPUT_SYSTEM
+            if (UnityEngine.InputSystem.Keyboard.current != null && UnityEngine.InputSystem.Keyboard.current.f2Key.wasPressedThisFrame) _showDebug = !_showDebug;
+#else
+            if (Input.GetKeyDown(KeyCode.F2)) _showDebug = !_showDebug;
+#endif
+        }
+
+        static bool Bad(float f) => float.IsNaN(f) || float.IsInfinity(f);
+        static bool Bad(Vector3 v) => Bad(v.x) || Bad(v.y) || Bad(v.z);
+
+        /// If any target became NaN/∞ (which freezes the view), fall back to a sane overview.
+        void GuardAgainstNaN()
+        {
+            if (!Bad(_focusT) && !Bad(_distT) && !Bad(_yawT) && !Bad(_pitchT) &&
+                !Bad(focus) && !Bad(distance) && !Bad(yaw) && !Bad(pitch)) return;
+            if (!_reportedNaN) { _reportedNaN = true; Debug.LogWarning("[Nevishk] Camera target became invalid (NaN); reset to overview."); }
+            _focusT = focus = new Vector3(panBounds.center.x, 0f, panBounds.center.y);
+            _distT = distance = Mathf.Clamp(maxDistance * 0.7f, minDistance, maxDistance);
+            _yawT = yaw = 0f; _pitchT = pitch = 55f;
+        }
+
+        // ---- F2: on-screen input diagnostics
+        bool _showDebug;
+        void OnGUI()
+        {
+            if (!_showDebug) return;
+            var es = EventSystem.current;
+            string over = es == null ? "no EventSystem" : (es.IsPointerOverGameObject() ? "YES" : "no");
+            string text =
+                $"Nevishk camera (F2 to hide)\n" +
+                $"pointer {MapInput.PointerPosition}  touches {MapInput.TouchCount}\n" +
+                $"LMB held {MapInput.PrimaryHeld}  RMB held {MapInput.SecondaryHeld}  scroll {MapInput.Scroll:F2}\n" +
+                $"keys pan {MapInput.KeyPan}  typing in UI {MapInput.TypingInUI}\n" +
+                $"pointer over UI: {over}  {_lastBlock}\n" +
+                $"press started over UI {_pressStartedOverUI}  dragging {IsDragging}\n" +
+                $"focus {focus:F0} → {_focusT:F0}\n" +
+                $"distance {distance:F0} → {_distT:F0}  yaw {yaw:F0}  pitch {pitch:F0}\n" +
+                $"bounds {panBounds}  enabled {enabled}";
+            GUI.Box(new Rect(10, Screen.height - 190, 560, 180), GUIContent.none);
+            GUI.Label(new Rect(18, Screen.height - 186, 548, 176), text);
         }
 
         void HandleMouse()
@@ -139,14 +192,16 @@ namespace Nevishk
         /// One-time Console note naming the UI that swallowed a click, to diagnose "the map won't drag".
         void ReportBlockingUI(Vector2 screenPos)
         {
-            if (_reportedBlock || EventSystem.current == null) return;
+            if (EventSystem.current == null) return;
+            bool log = !_reportedBlock;
             _reportedBlock = true;
             var data = new PointerEventData(EventSystem.current) { position = screenPos };
             var hits = new System.Collections.Generic.List<RaycastResult>();
             EventSystem.current.RaycastAll(data, hits);
             var names = new System.Text.StringBuilder();
             foreach (var h in hits) names.Append(h.gameObject.name).Append(" (").Append(h.module != null ? h.module.GetType().Name : "?").Append("); ");
-            Debug.Log($"[Nevishk] A drag started over UI and was ignored by the camera. Under the cursor: {(hits.Count > 0 ? names.ToString() : "nothing reported by raycasters")}");
+            if (log) Debug.Log($"[Nevishk] A drag started over UI and was ignored by the camera. Under the cursor: {(hits.Count > 0 ? names.ToString() : "nothing reported by raycasters")}");
+            _lastBlock = hits.Count > 0 ? "(" + hits[0].gameObject.name + ")" : "";
         }
 
         void HandleTouch()
