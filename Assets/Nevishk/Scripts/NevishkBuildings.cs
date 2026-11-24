@@ -49,6 +49,35 @@ namespace Nevishk
                 "gallery"  => Gallery(kit, w, d),
                 "towers"   => Towers(kit, w, d),
                 "chapel"   => Chapel(kit, w, d),
+                "checkpoint" => Checkpoint(kit, w, d),
+                "bridge"     => Bridge(kit, w, d),
+                "fountain"   => Fountain(kit, w, d),
+                "alley"      => Alley(kit, w, d, false),
+                "street"     => Alley(kit, w, d, true),
+                "firepit"    => Firepit(kit, w, d),
+                "cave"       => Cave(kit, w, d),
+                "watertower" => WaterTower(kit, w, d),
+                "tunnel"     => TunnelPortal(kit, w, d),
+                "powerplant" => PowerPlant(kit, w, d),
+                "nuclear"    => Nuclear(kit, w, d),
+                "silos"      => Silos(kit, w, d),
+                "concrete"   => ConcretePlant(kit, w, d),
+                "brewery"    => Brewery(kit, w, d),
+                "mine"       => Mine(kit, w, d),
+                "office"     => Office(kit, w, d),
+                "memorial"   => Memorial(kit, w, d),
+                "barracks"   => Barracks(kit, w, d),
+                "fortress"   => Fortress(kit, w, d),
+                "panels"     => Panels(kit, w, d),
+                "newblocks"  => NewBlocks(kit, w, d),
+                "embankment" => Embankment(kit, w, d),
+                "market"     => Market(kit, w, d),
+                "treatment"  => Treatment(kit, w, d),
+                "oldtown"    => OldTown(kit, w, d),
+                "university" => University(kit, w, d),
+                "bar"        => Bar(kit, w, d),
+                "park"       => Park(kit, w, d),
+                "statue"     => Statue(kit, w, d),
                 _          => kit.Box(Vector3.zero, new Vector3(w, 8, d), Concrete),
             };
             return new Result { root = root.gameObject, height = h, radius = Mathf.Max(w, d) * 0.6f };
@@ -220,6 +249,370 @@ namespace Nevishk
             return 22f;
         }
 
+        // ------------------------------------------------------------------ which structure for which place
+
+        /// Picks a structure for a lore landmark from its name (Russian, as on the board).
+        /// Returns null for places that are landscape, not buildings (Степь, Горы).
+        public static (string type, float w, float d)? ForLandmark(string name)
+        {
+            string n = name.ToLowerInvariant();
+            bool Has(params string[] keys) { foreach (var k in keys) if (n.Contains(k)) return true; return false; }
+            if (Has("степь", "горы", "балаур", "prime city")) return null;
+            if (Has("кпп")) return ("checkpoint", 18, 8);
+            if (Has("мост")) return ("bridge", 60, 9);
+            if (Has("фонтан")) return ("fountain", 12, 12);
+            if (Has("аллея «память»", "аллея \"память\"")) return ("alley", 46, 8);
+            if (Has("бульвар", "улица", "туманная", "светлый двор", "аллея")) return ("street", 56, 10);
+            if (Has("кострище")) return ("firepit", 8, 8);
+            if (Has("пещера")) return ("cave", 18, 14);
+            if (Has("насосная")) return ("watertower", 10, 10);
+            if (Has("туннель", "тунель")) return ("tunnel", 14, 6);
+            if (Has("тэц")) return ("powerplant", 44, 26);
+            if (Has("аэс")) return ("nuclear", 40, 30);
+            if (Has("элеватор")) return ("silos", 30, 10);
+            if (Has("жби")) return ("concrete", 40, 18);
+            if (Has("пивзавод")) return ("brewery", 30, 18);
+            if (Has("горное производство")) return ("mine", 34, 26);
+            if (Has("creer")) return ("office", 24, 20);
+            if (Has("мемориал")) return ("memorial", 16, 12);
+            if (Has("военная часть")) return ("barracks", 42, 30);
+            if (Has("крепост")) return ("fortress", 34, 30);
+            if (Has("панельки", "общаги")) return ("panels", 46, 24);
+            if (Has("новые жк")) return ("newblocks", 36, 20);
+            if (Has("набережная")) return ("embankment", 60, 8);
+            if (Has("толкучка")) return ("market", 26, 18);
+            if (Has("очистные")) return ("treatment", 40, 30);
+            if (Has("старый центр")) return ("oldtown", 40, 30);
+            if (Has("универ", "б.л.я", "е.б.н.у")) return ("university", 34, 20);
+            if (Has("хромая жаба")) return ("bar", 12, 9);
+            if (Has("хутор")) return ("houses", 34, 26);
+            if (Has("депо")) return ("depot", 22, 18);
+            if (Has("парк")) return ("park", 40, 30);
+            if (Has("брынкуш")) return ("statue", 8, 8);
+            return ("houses", 24, 18);   // anything else: a few buildings
+        }
+
+        // ------------------------------------------------------------------ more building types
+
+        static readonly Color Stone   = new Color(0.58f, 0.56f, 0.52f);
+        static readonly Color Canvas1 = new Color(0.62f, 0.32f, 0.24f);
+        static readonly Color Canvas2 = new Color(0.30f, 0.42f, 0.50f);
+        static readonly Color Canvas3 = new Color(0.66f, 0.58f, 0.32f);
+        static readonly Color LampGlow = new Color(1.00f, 0.84f, 0.55f);
+        static readonly Color Water   = new Color(0.16f, 0.24f, 0.27f);
+        static readonly Color Leaf    = new Color(0.22f, 0.34f, 0.22f);
+        static readonly Color Bronze  = new Color(0.45f, 0.34f, 0.20f);
+        static readonly Color RedWhite = new Color(0.75f, 0.20f, 0.18f);
+
+        static float Checkpoint(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(-3, 0, -2), new Vector3(4, 3.2f, 4), Whitewash);                 // booth
+            k.Box(new Vector3(-3, 3.2f, -2), new Vector3(4.6f, 0.4f, 4.6f), RoofDark);
+            k.Box(new Vector3(-0.6f, 0, 0), new Vector3(0.5f, 1.4f, 0.5f), DarkConc);          // barrier post
+            k.Box(new Vector3(3.5f, 1.2f, 0), new Vector3(8f, 0.25f, 0.25f), RedWhite);        // barrier arm
+            k.Box(new Vector3(-w / 2 - 1, 0, d / 2), new Vector3(w * 0.4f, 2.4f, 0.3f), DarkConc);   // fence
+            k.Box(new Vector3(w / 2 - 2, 0, d / 2), new Vector3(w * 0.3f, 2.4f, 0.3f), DarkConc);
+            return 4f;
+        }
+
+        /// Bridge along local x, deck surface at y = 0 (the root sits at deck level), piers to well below.
+        static float Bridge(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(0, -1.4f, 0), new Vector3(w, 1.4f, d), Stone);                    // deck
+            foreach (float s in new[] { -1f, 1f })
+                k.Box(new Vector3(0, 0, s * (d / 2 - 0.2f)), new Vector3(w, 1.1f, 0.35f), DarkConc);   // parapets
+            int piers = Mathf.Max(1, Mathf.RoundToInt(w / 16f) - 1);
+            for (int i = 1; i <= piers; i++)
+            {
+                float x = -w / 2 + w * i / (piers + 1);
+                k.Box(new Vector3(x, -60f, 0), new Vector3(2.4f, 58.6f, d * 0.8f), Stone);
+            }
+            for (int i = 0; i < Mathf.RoundToInt(w / 10f); i++)                                    // lamps along it
+                k.Lamp(new Vector3(-w / 2 + 5 + i * 10, 0, d / 2 - 0.4f), 4f);
+            return 5f;
+        }
+
+        static float Fountain(Kit k, float w, float d)
+        {
+            k.Cylinder(Vector3.zero, w * 0.45f, 1.0f, Stone);
+            k.Cylinder(new Vector3(0, 0.05f, 0), w * 0.40f, 1.0f, Water, 0.85f);
+            k.Cylinder(Vector3.zero, 0.6f, 3.6f, Stone);
+            k.Cylinder(new Vector3(0, 3.6f, 0), 1.6f, 0.4f, Stone);
+            k.Sphere(new Vector3(0, 4.6f, 0), new Vector3(1.2f, 1.6f, 1.2f), DarkConc);           // worn figure
+            return 5.5f;
+        }
+
+        static float Alley(Kit k, float w, float d, bool street)
+        {
+            k.Box(Vector3.zero, new Vector3(w, 0.15f, street ? d * 0.7f : 3.2f), street ? DarkConc : Stone);   // path / road
+            for (float x = -w / 2 + 3; x <= w / 2 - 3; x += street ? 9f : 7f)
+            {
+                k.Lamp(new Vector3(x, 0, d / 2), 4.5f);
+                k.Lamp(new Vector3(x + 3.5f, 0, -d / 2), 4.5f);
+                if (!street) k.Box(new Vector3(x + 1.7f, 0, d / 2 - 0.9f), new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
+                else k.Spire(new Vector3(x + 1.7f, 0, d / 2 + 1.8f), 1.6f, 5f, Leaf);           // street trees
+            }
+            return 5f;
+        }
+        static readonly Color Sleeperish = new Color(0.33f, 0.25f, 0.18f);
+
+        static float Firepit(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 9; i++)
+            {
+                float a = i / 9f * Mathf.PI * 2;
+                k.Box(new Vector3(Mathf.Cos(a) * 2.3f, 0, Mathf.Sin(a) * 2.3f), new Vector3(0.9f, 0.6f, 0.8f), Stone);
+            }
+            foreach (float a in new[] { 0.3f, 2.4f, 4.4f })
+                k.CylinderLying(new Vector3(Mathf.Cos(a) * 4.2f, 0.35f, Mathf.Sin(a) * 4.2f), 0.35f, 3.2f, Sleeperish);
+            k.Box(Vector3.zero, new Vector3(1.4f, 0.4f, 1.4f), new Color(1f, 0.45f, 0.15f), 0.2f);
+            k.Light(new Vector3(0, 1.2f, 0), new Color(1f, 0.5f, 0.2f), 16f, 2.5f);
+            return 2f;
+        }
+
+        static float Cave(Kit k, float w, float d)
+        {
+            k.Sphere(new Vector3(0, 2f, 0), new Vector3(w, 11f, d), Rock);
+            k.Box(new Vector3(0, 0, -d * 0.42f), new Vector3(5.5f, 4.5f, 3f), Black);
+            return 8f;
+        }
+        static readonly Color Rock  = new Color(0.44f, 0.41f, 0.36f);
+        static readonly Color Black = new Color(0.03f, 0.03f, 0.03f);
+
+        static float WaterTower(Kit k, float w, float d)
+        {
+            foreach (var (x, z) in new[] { (-2.4f, -2.4f), (2.4f, -2.4f), (-2.4f, 2.4f), (2.4f, 2.4f) })
+                k.Box(new Vector3(x, 0, z), new Vector3(0.6f, 11f, 0.6f), DarkConc);
+            k.Cylinder(new Vector3(0, 11f, 0), 4f, 6f, Brick);
+            k.Spire(new Vector3(0, 17f, 0), 4.3f, 2.5f, RoofDark);
+            return 19.5f;
+        }
+
+        static float TunnelPortal(Kit k, float w, float d)
+        {
+            k.Box(Vector3.zero, new Vector3(w, 9f, d), Rock);
+            k.Box(new Vector3(0, 0, -d / 2 - 0.1f), new Vector3(w * 0.45f, 5.5f, 1.5f), Concrete);
+            k.Box(new Vector3(0, 0, -d / 2 - 0.3f), new Vector3(w * 0.3f, 4.6f, 1.6f), Black);
+            return 9f;
+        }
+
+        static float PowerPlant(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(-w * 0.18f, 0, -d * 0.2f), new Vector3(w * 0.55f, 14f, d * 0.5f), Brick);
+            k.Gable(new Vector3(-w * 0.18f, 14f, -d * 0.2f), new Vector3(w * 0.56f, 3f, d * 0.52f), RoofDark, alongZ: false);
+            // Cooling towers: a wide base and a narrower waist.
+            foreach (float x in new[] { w * 0.15f, w * 0.38f })
+            {
+                k.Cylinder(new Vector3(x, 0, d * 0.22f), 8f, 12f, Concrete);
+                k.Cylinder(new Vector3(x, 12f, d * 0.22f), 6.6f, 10f, Concrete);
+                k.Cylinder(new Vector3(x, 22f, d * 0.22f), 7.2f, 6f, Concrete);
+            }
+            k.Cylinder(new Vector3(-w * 0.4f, 0, d * 0.3f), 1.6f, 44f, RedWhite);
+            return 44f;
+        }
+
+        static float Nuclear(Kit k, float w, float d)
+        {
+            // Unfinished: reactor drum with a half-built dome, scaffolding and a tower crane.
+            k.Cylinder(Vector3.zero, 10f, 18f, Concrete);
+            k.Sphere(new Vector3(0, 18f, 0), new Vector3(18f, 10f, 18f), DarkConc);
+            k.Box(new Vector3(-6f, 18f, 0), new Vector3(8f, 6f, 20f), Black);                     // the dome's open gap
+            k.Box(new Vector3(w * 0.36f, 0, 0), new Vector3(1.2f, 52f, 1.2f), Gilt);                 // crane mast
+            k.Box(new Vector3(w * 0.16f, 51f, 0), new Vector3(30f, 1.2f, 1.2f), Gilt);               // jib
+            k.Box(new Vector3(-w * 0.32f, 0, d * 0.25f), new Vector3(10f, 9f, 12f), Concrete);
+            return 53f;
+        }
+
+        static float Silos(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 6; i++)
+                k.Cylinder(new Vector3(-w / 2 + 3 + i * (w - 10) / 5f, 0, 0), 2.6f, 24f, Concrete);
+            k.Box(new Vector3(w / 2 - 3, 0, 0), new Vector3(6f, 32f, 7f), Concrete);
+            k.Box(new Vector3(0, 24f, 0), new Vector3(w - 4, 1.6f, 2.4f), DarkConc);                // conveyor gallery
+            return 32f;
+        }
+
+        static float ConcretePlant(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(0, 0, -d * 0.2f), new Vector3(w, 10f, d * 0.55f), Concrete);
+            k.Box(new Vector3(0, 10f, -d * 0.2f), new Vector3(w + 0.5f, 0.6f, d * 0.57f), RoofDark);
+            // Gantry crane over the slab yard.
+            foreach (float x in new[] { -w * 0.3f, w * 0.3f })
+            {
+                k.Box(new Vector3(x, 0, d * 0.3f - 4), new Vector3(1f, 12f, 1f), Gilt);
+                k.Box(new Vector3(x, 0, d * 0.3f + 4), new Vector3(1f, 12f, 1f), Gilt);
+            }
+            k.Box(new Vector3(0, 12f, d * 0.3f - 4), new Vector3(w * 0.62f, 1.2f, 1f), Gilt);
+            k.Box(new Vector3(0, 12f, d * 0.3f + 4), new Vector3(w * 0.62f, 1.2f, 1f), Gilt);
+            for (int i = 0; i < 4; i++) k.Box(new Vector3(-w * 0.15f + i * 4, 0, d * 0.32f), new Vector3(3f, 1.4f + i * 0.6f, 6f), DarkConc);
+            return 13f;
+        }
+
+        static float Brewery(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(-w * 0.12f, 0, 0), new Vector3(w * 0.7f, 9f, d * 0.8f), Brick);
+            k.Gable(new Vector3(-w * 0.12f, 9f, 0), new Vector3(w * 0.72f, 3.5f, d * 0.82f), RoofDark, alongZ: false);
+            for (int i = 0; i < 3; i++) k.Cylinder(new Vector3(w * 0.36f, 0, -d * 0.3f + i * d * 0.3f), 2f, 11f, Glass);
+            k.Cylinder(new Vector3(-w * 0.4f, 0, d * 0.3f), 1.2f, 20f, Brick);
+            return 20f;
+        }
+
+        static float Mine(Kit k, float w, float d)
+        {
+            // Abandoned mine: headframe with a wheel, a spoil heap, a roofless shed.
+            foreach (var (x, z) in new[] { (-2f, -2f), (2f, -2f), (-2f, 2f), (2f, 2f) })
+                k.Box(new Vector3(x - w * 0.2f, 0, z), new Vector3(0.7f, 22f, 0.7f), Rail);
+            k.CylinderLying(new Vector3(-w * 0.2f, 22.5f, 0), 2.4f, 0.8f, Rail);
+            k.Spire(new Vector3(w * 0.22f, 0, d * 0.1f), 12f, 14f, Rock);
+            k.Box(new Vector3(-w * 0.2f, 0, d * 0.32f), new Vector3(12f, 4f, 7f), DarkConc);
+            return 25f;
+        }
+
+        static float Office(Kit k, float w, float d)
+        {
+            k.Box(Vector3.zero, new Vector3(w, 6f, d), DarkConc);
+            k.Box(new Vector3(-w * 0.15f, 6f, 0), new Vector3(w * 0.55f, 34f, d * 0.55f), Glass, 0.85f);
+            k.Box(new Vector3(-w * 0.15f, 40f, 0), new Vector3(w * 0.45f, 1.5f, d * 0.45f), DarkConc);
+            return 41.5f;
+        }
+
+        static float Memorial(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 3; i++) k.Box(new Vector3(0, i * 0.6f, 0), new Vector3(w - i * 3, 0.6f, d - i * 3), Stone);
+            k.Box(new Vector3(0, 1.8f, -d * 0.15f), new Vector3(w * 0.7f, 3.2f, 0.8f), DarkConc);     // wall of names
+            k.Box(new Vector3(0, 1.8f, d * 0.15f), new Vector3(1.8f, 16f, 1.8f), Stone);              // obelisk
+            k.Spire(new Vector3(0, 17.8f, d * 0.15f), 1.3f, 3f, Stone);
+            return 21f;
+        }
+
+        static float Barracks(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                k.Box(new Vector3(-w * 0.1f, 0, -d * 0.2f + i * d * 0.35f), new Vector3(w * 0.6f, 5f, 7f), Patina);
+                k.Gable(new Vector3(-w * 0.1f, 5f, -d * 0.2f + i * d * 0.35f), new Vector3(w * 0.62f, 2.2f, 7.4f), RoofDark, alongZ: false);
+            }
+            foreach (var (x, z) in new[] { (-1f, -1f), (1f, -1f), (-1f, 1f), (1f, 1f) })
+                k.Box(new Vector3(w * 0.38f + x, 0, d * 0.3f + z), new Vector3(0.4f, 10f, 0.4f), Rail);
+            k.Box(new Vector3(w * 0.38f, 10f, d * 0.3f), new Vector3(3.4f, 2.6f, 3.4f), Patina);
+            k.Box(new Vector3(0, 0, -d / 2), new Vector3(w, 2.4f, 0.3f), DarkConc);
+            k.Box(new Vector3(0, 0, d / 2), new Vector3(w, 2.4f, 0.3f), DarkConc);
+            k.Box(new Vector3(-w / 2, 0, 0), new Vector3(0.3f, 2.4f, d), DarkConc);
+            return 12.6f;
+        }
+
+        static float Fortress(Kit k, float w, float d)
+        {
+            k.Box(new Vector3(-w * 0.1f, 0, -d / 2), new Vector3(w * 0.7f, 8f, 2.4f), Stone);
+            k.Box(new Vector3(-w / 2, 0, 0), new Vector3(2.4f, 6f, d * 0.8f), Stone);
+            k.Box(new Vector3(w / 2, 0, d * 0.1f), new Vector3(2.4f, 9f, d * 0.5f), Stone);
+            k.Box(new Vector3(w * 0.1f, 0, d / 2), new Vector3(w * 0.4f, 4f, 2.4f), Stone);
+            k.Cylinder(new Vector3(-w / 2, 0, -d / 2), 4.5f, 13f, Stone);
+            k.Cylinder(new Vector3(w / 2, 0, d / 2), 4.5f, 7f, Stone);
+            return 13f;
+        }
+
+        static float Panels(Kit k, float w, float d)
+        {
+            float[] hs = { 27f, 15f, 27f };
+            for (int i = 0; i < 3; i++)
+                k.Box(new Vector3(-w / 2 + w * (i + 0.5f) / 3f, 0, (i - 1) * d * 0.25f), new Vector3(w / 3f * 0.85f, hs[i], 8f), Concrete);
+            return 27f;
+        }
+
+        static float NewBlocks(Kit k, float w, float d)
+        {
+            float[] hs = { 42f, 50f, 36f };
+            for (int i = 0; i < 3; i++)
+            {
+                var p = new Vector3(-w / 2 + w * (i + 0.5f) / 3f, 0, (i % 2 == 0 ? -1 : 1) * d * 0.2f);
+                k.Box(p, new Vector3(9f, hs[i], 9f), Cream);
+                k.Box(p + Vector3.up * hs[i], new Vector3(9.4f, 1f, 9.4f), Patina);
+            }
+            return 51f;
+        }
+
+        static float Embankment(Kit k, float w, float d)
+        {
+            k.Box(Vector3.zero, new Vector3(w, 0.2f, d * 0.6f), Stone);
+            k.Box(new Vector3(0, 0.2f, -d * 0.3f), new Vector3(w, 1.1f, 0.3f), Rail);               // railing
+            for (float x = -w / 2 + 4; x <= w / 2 - 4; x += 8f)
+            {
+                k.Lamp(new Vector3(x, 0, -d * 0.3f + 0.6f), 4.5f);
+                k.Box(new Vector3(x + 4, 0, d * 0.15f), new Vector3(2.2f, 0.55f, 0.7f), Sleeperish);
+            }
+            return 5f;
+        }
+
+        static float Market(Kit k, float w, float d)
+        {
+            Color[] tops = { Canvas1, Canvas2, Canvas3 };
+            int c = 0;
+            for (float x = -w / 2 + 2.5f; x <= w / 2 - 2.5f; x += 5f)
+            for (float z = -d / 2 + 2.5f; z <= d / 2 - 2.5f; z += 6f)
+            {
+                k.Box(new Vector3(x, 0, z), new Vector3(3.6f, 2.4f, 3.6f), Whitewash);
+                k.Gable(new Vector3(x, 2.4f, z), new Vector3(4.2f, 1.4f, 4.2f), tops[c++ % 3], alongZ: c % 2 == 0);
+            }
+            return 4f;
+        }
+
+        static float Treatment(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                var p = new Vector3(-w * 0.25f + (i % 2) * w * 0.5f, 0, -d * 0.22f + (i / 2) * d * 0.44f);
+                k.Cylinder(p, 7f, 2.5f, Concrete);
+                k.Cylinder(p + Vector3.up * 0.1f, 6.4f, 2.5f, Water, 0.85f);
+            }
+            k.Box(new Vector3(0, 0, 0), new Vector3(8f, 6f, 6f), Brick);
+            return 6f;
+        }
+
+        static float OldTown(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                float x = k.Range(-w / 2 + 4, w / 2 - 4), z = k.Range(-d / 2 + 4, d / 2 - 4);
+                float hw = k.Range(6f, 9f), hd = k.Range(5f, 7f), hh = k.Range(6f, 10f);
+                k.Box(new Vector3(x, 0, z), new Vector3(hw, hh, hd), i % 3 == 0 ? Cream : Whitewash);
+                k.Gable(new Vector3(x, hh, z), new Vector3(hw + 0.6f, 3f, hd + 0.6f), RoofRed, alongZ: false);
+            }
+            k.Box(Vector3.zero, new Vector3(5f, 18f, 5f), Whitewash);
+            k.Spire(new Vector3(0, 18f, 0), 3.4f, 9f, Patina);
+            return 27f;
+        }
+
+        static float University(Kit k, float w, float d) => Gallery(k, w, d);
+
+        static float Bar(Kit k, float w, float d)
+        {
+            k.Box(Vector3.zero, new Vector3(w * 0.8f, 5f, d * 0.8f), Brick);
+            k.Gable(new Vector3(0, 5f, 0), new Vector3(w * 0.82f, 2.6f, d * 0.82f), RoofDark, alongZ: false);
+            k.Box(new Vector3(0, 2.2f, -d * 0.4f - 0.1f), new Vector3(w * 0.5f, 1.6f, 0.2f), LampGlow, 0.4f);   // lit windows
+            k.Light(new Vector3(0, 2.5f, -d * 0.4f - 1.5f), new Color(1f, 0.6f, 0.3f), 14f, 1.8f);
+            return 7.6f;
+        }
+
+        static float Park(Kit k, float w, float d)
+        {
+            for (int i = 0; i < 14; i++)
+            {
+                float x = k.Range(-w / 2, w / 2), z = k.Range(-d / 2, d / 2);
+                k.Spire(new Vector3(x, 0, z), k.Range(2f, 3f), k.Range(6f, 10f), Leaf);
+            }
+            k.Box(Vector3.zero, new Vector3(w, 0.12f, 3f), Stone);
+            for (float x = -w / 2 + 6; x < w / 2; x += 12f) k.Lamp(new Vector3(x, 0, 2.2f), 4f);
+            return 10f;
+        }
+
+        static float Statue(Kit k, float w, float d)
+        {
+            k.Box(Vector3.zero, new Vector3(3.2f, 2.4f, 3.2f), Stone);
+            k.Sphere(new Vector3(0, 4.2f, 0), new Vector3(2.2f, 3.4f, 2.6f), Bronze);                 // an ovoid head, like Brâncuși's Muse
+            return 6f;
+        }
+
         // ------------------------------------------------------------------ kit
 
         class Kit
@@ -246,8 +639,27 @@ namespace Nevishk
                 Part(PrismMesh, bottom, s, rot, c, 0.1f);
             }
 
-            public GameObject Cylinder(Vector3 bottom, float radius, float height, Color c)
-                => Part(UnitCylinder, bottom + Vector3.up * height / 2, new Vector3(radius * 2, height / 2, radius * 2), Quaternion.identity, c, 0.1f);
+            public GameObject Cylinder(Vector3 bottom, float radius, float height, Color c, float smooth = 0.1f)
+                => Part(UnitCylinder, bottom + Vector3.up * height / 2, new Vector3(radius * 2, height / 2, radius * 2), Quaternion.identity, c, smooth);
+
+            public void Sphere(Vector3 centre, Vector3 size, Color c)
+                => Part(UnitSphere, centre, size, Quaternion.identity, c, 0.1f);
+
+            /// Street lamp: thin post with a small glowing head.
+            public void Lamp(Vector3 bottom, float height)
+            {
+                Part(UnitCylinder, bottom + Vector3.up * height / 2, new Vector3(0.25f, height / 2, 0.25f), Quaternion.identity, Rail, 0.3f);
+                Part(UnitCube, bottom + Vector3.up * (height + 0.25f), new Vector3(0.7f, 0.5f, 0.7f), Quaternion.identity, LampGlow, 0.6f);
+            }
+
+            public void Light(Vector3 local, Color c, float range, float intensity)
+            {
+                var l = new GameObject("Light").AddComponent<UnityEngine.Light>();
+                l.transform.SetParent(_root, false);
+                l.transform.localPosition = local;
+                l.type = LightType.Point; l.color = c; l.range = range; l.intensity = intensity;
+                l.shadows = LightShadows.None;
+            }
 
             /// Cylinder lying along x with its axis at the given point (for arched roofs).
             public void CylinderLying(Vector3 axis, float radius, float length, Color c)
@@ -278,6 +690,8 @@ namespace Nevishk
         public static Mesh SpireMesh => ConeMesh;
         static Mesh UnitCube => _cube != null ? _cube : (_cube = Primitive(PrimitiveType.Cube));
         static Mesh UnitCylinder => _cyl != null ? _cyl : (_cyl = Primitive(PrimitiveType.Cylinder));
+        static Mesh _sphere;
+        static Mesh UnitSphere => _sphere != null ? _sphere : (_sphere = Primitive(PrimitiveType.Sphere));
 
         static Mesh Primitive(PrimitiveType t)
         {

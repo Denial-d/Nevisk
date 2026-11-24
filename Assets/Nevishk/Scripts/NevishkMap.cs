@@ -386,6 +386,9 @@ namespace Nevishk
             var water = NewMat(NevishkTheme.Water);
             water.SetFloat("_Smoothness", 0.9f);
             AddMesh(parent, "Мырла", _terrain.BuildWater(), water);
+            // Water neither casts nor needs shadows (the dark stepped shapes under the old water came from this).
+            var waterRenderer = parent.Find("Мырла")?.GetComponent<MeshRenderer>();
+            if (waterRenderer != null) { waterRenderer.shadowCastingMode = ShadowCastingMode.Off; waterRenderer.receiveShadows = true; }
 
             // A strip down the detailed terrain's edges, so no gap can show where it meets the countryside.
             AddMesh(parent, "Edge", _terrain.BuildSkirt(), NewMat(new Color(0.40f, 0.39f, 0.30f)));
@@ -420,6 +423,15 @@ namespace Nevishk
                                     Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv)));
                 g = Mathf.Min(g, Ground(u, v)) - 0.4f;
                 Vector3 pos = UvToWorld(new[] { u, v }, g);
+                if ((string)m["type"] == "bridge")
+                {
+                    // Deck a few metres above the higher of its two ends (root's local x = along the bridge).
+                    Vector3 axis = Quaternion.Euler(0, yaw, 0) * Vector3.right;
+                    Vector3 c = UvToWorld(new[] { u, v });
+                    float e0 = _terrain != null ? _terrain.HeightAtWorld(c - axis * w * 0.5f) : 0f;
+                    float e1 = _terrain != null ? _terrain.HeightAtWorld(c + axis * w * 0.5f) : 0f;
+                    pos = new Vector3(c.x, Mathf.Max(e0, e1, Ground(u, v)) + 4f, c.z);
+                }
                 var built = NevishkBuildings.Build((string)m["type"], root, pos, w, d, yaw, MatFor, seed++);
                 var spot = new ModelSpot
                 {
@@ -430,6 +442,84 @@ namespace Nevishk
                 string lid = (string)m["landmark"];
                 if (!string.IsNullOrEmpty(lid)) _modelByLandmark[lid] = spot;
             }
+
+            // Every other place on the map gets a structure too (checkpoints, bridges, the fountain, power plants…).
+            foreach (var l in _db.landmarks)
+            {
+                if (_modelByLandmark.ContainsKey(l.id)) continue;
+                var spec = NevishkBuildings.ForLandmark(l.name);
+                if (spec == null) continue;
+                var (type, wPx, dPx) = spec.Value;
+                float u = l.uv[0], v = l.uv[1];
+                float w = PxToWorld(wPx), d = PxToWorld(dPx);
+                int hash = 0; foreach (char ch in l.id + l.name) hash = hash * 31 + ch;
+                hash &= 0x7fffffff;
+                float yaw = (hash % 4) * 90f + (hash / 4 % 21 - 10);
+                Vector3 pos;
+                if (type == "bridge")
+                {
+                    if (FindCrossing(u, v, out var centre, out var axisYaw, out var length, out var deckY))
+                    { pos = new Vector3(centre.x, deckY, centre.z); yaw = axisYaw; w = length; }
+                    else pos = OnGround(l.uv, 4f);   // nothing to cross: a footbridge on piers
+                }
+                else
+                {
+                    float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
+                    float g = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
+                                        Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv)));
+                    g = Mathf.Min(g, Ground(u, v)) - 0.4f;
+                    pos = UvToWorld(l.uv, g);
+                }
+                var built = NevishkBuildings.Build(type, root, pos, w, d, yaw, MatFor, seed++);
+                var spot = new ModelSpot
+                {
+                    u = u, v = v, rPx = Mathf.Max(w, d) * 0.5f * _db.city.mapPixelSize[0] / mapWidth,
+                    pos = pos, top = built.height, radius = built.radius, label = l.name
+                };
+                _models.Add(spot);
+                _modelByLandmark[l.id] = spot;
+            }
+        }
+
+        /// Finds how a bridge at this spot should run: tries directions through the point and picks the one
+        /// spanning the lowest ground (river or ravine) between the highest banks.
+        bool FindCrossing(float u, float v, out Vector3 centre, out float yaw, out float length, out float deckY)
+        {
+            centre = UvToWorld(new[] { u, v }); yaw = 0; length = 0; deckY = 0;
+            const float R = 75f, step = 3f;
+            int nS = Mathf.RoundToInt(2 * R / step) + 1;
+            var prof = new float[nS];
+            float bestGap = 2.5f; bool found = false;
+            for (int deg = 0; deg < 180; deg += 10)
+            {
+                float a = deg * Mathf.Deg2Rad;
+                var dir = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a));
+                for (int s = 0; s < nS; s++)
+                {
+                    var p = centre + dir * (-R + s * step);
+                    float wl = _terrain.WaterAtWorld(p);
+                    prof[s] = float.IsNaN(wl) ? _terrain.HeightAtWorld(p) : wl - 6f;   // water counts as deep
+                }
+                int mid = nS / 2;
+                float low = float.MaxValue;
+                for (int s = mid - 4; s <= mid + 4; s++) low = Mathf.Min(low, prof[s]);
+                float leftTop = float.MinValue, rightTop = float.MinValue;
+                for (int s = 0; s < mid - 3; s++) leftTop = Mathf.Max(leftTop, prof[s]);
+                for (int s = mid + 3; s < nS; s++) rightTop = Mathf.Max(rightTop, prof[s]);
+                float bank = Mathf.Min(leftTop, rightTop), gap = bank - low;
+                if (gap <= bestGap) continue;
+                // Ends: walk out from the middle until the ground is back up near the bank height.
+                int l = mid, r = mid;
+                while (l > 0 && prof[l] < bank - 1f) l--;
+                while (r < nS - 1 && prof[r] < bank - 1f) r++;
+                bestGap = gap; found = true;
+                float t0 = -R + l * step, t1 = -R + r * step;
+                length = Mathf.Clamp(t1 - t0 + 8f, 16f, 150f);
+                centre = UvToWorld(new[] { u, v }) + dir * ((t0 + t1) * 0.5f);
+                deckY = Mathf.Max(prof[l], prof[r]) + 0.8f;
+                yaw = -deg;   // root's local x runs along the bridge
+            }
+            return found;
         }
 
         /// Is a map UV within (model radius + margin px) of a drawn building?

@@ -229,22 +229,41 @@ namespace Nevishk
         /// Flat water surfaces: one quad per wet cell, merged.
         public Mesh BuildWater()
         {
+            // Water surfaces are flat sheets at their water level that reach a few cells *under* the banks.
+            // The visible shoreline is then where the terrain dips below the sheet, which follows the smooth
+            // banks instead of the grid's square cells.
+            int n = GridW * GridH;
+            var level = new float[n];
+            for (int q = 0; q < n; q++) level[q] = _water[q];
+            for (int pass = 0; pass < 4; pass++)
+            {
+                var grown = (float[])level.Clone();
+                for (int j = 0; j < GridH; j++)
+                for (int i = 0; i < GridW; i++)
+                {
+                    int k = j * GridW + i;
+                    if (!float.IsNaN(level[k])) continue;
+                    float found = float.NaN;
+                    if (i > 0 && !float.IsNaN(level[k - 1])) found = level[k - 1];
+                    else if (i < GridW - 1 && !float.IsNaN(level[k + 1])) found = level[k + 1];
+                    else if (j > 0 && !float.IsNaN(level[k - GridW])) found = level[k - GridW];
+                    else if (j < GridH - 1 && !float.IsNaN(level[k + GridW])) found = level[k + GridW];
+                    // Only spread under banks, never into a deeper hollow (the ravine) where it would show.
+                    if (!float.IsNaN(found) && _h[k] > found - 2f) grown[k] = found;
+                }
+                level = grown;
+            }
+
             var v = new List<Vector3>(); var tri = new List<int>();
             float cx = (_maxX - _minX) / (GridW - 1), cz = (_maxZ - _minZ) / (GridH - 1);
             for (int j = 0; j < GridH - 1; j++)
             for (int i = 0; i < GridW - 1; i++)
             {
-                float lvl = 0f; int wet = 0;
-                for (int q = 0; q < 4; q++)
-                {
-                    float w = _water[(j + (q >> 1)) * GridW + i + (q & 1)];
-                    if (!float.IsNaN(w)) { lvl += w; wet++; }
-                }
-                if (wet == 0) continue;
-                lvl /= wet;
-                // Grow each quad slightly so neighbours overlap and leave no cracks.
-                float x0 = X(i) - 0.3f, x1 = x0 + cx + 0.6f;
-                float z0 = Z(j) + 0.3f, z1 = z0 - cz - 0.6f;
+                float lvl = float.NaN;
+                for (int q = 0; q < 4 && float.IsNaN(lvl); q++) lvl = level[(j + (q >> 1)) * GridW + i + (q & 1)];
+                if (float.IsNaN(lvl)) continue;
+                float x0 = X(i) - 0.2f, x1 = x0 + cx + 0.4f;
+                float z0 = Z(j) + 0.2f, z1 = z0 - cz - 0.4f;
                 int k = v.Count;
                 v.Add(new Vector3(x0, lvl, z0)); v.Add(new Vector3(x1, lvl, z0));
                 v.Add(new Vector3(x0, lvl, z1)); v.Add(new Vector3(x1, lvl, z1));

@@ -225,9 +225,7 @@ alb[park] = col('#4E6A3C')
 alb[ponds] = col('#2F3A33')
 alb = alb * (1 - rock[..., None]) + col('#5B5650') * rock[..., None]
 alb = alb * tone
-# Keep the hand-drawn ink (outlines, lettering, the railway) like a printed map.
-ink_strength = np.clip((0.75 - lum) / 0.55, 0, 1)
-alb = alb * (1 - 0.78 * ink_strength[..., None])
+# The drawn ink outlines are not printed on the ground any more: district edges are real banks now.
 alb_img = Image.fromarray((np.clip(alb, 0, 1) * 255).astype(np.uint8)).resize((2048, int(2048 * H / W)), Image.BICUBIC)
 alb_img.save(f'{OUTDIR}/nevishk_albedo.png', optimize=True)
 
