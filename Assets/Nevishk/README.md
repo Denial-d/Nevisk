@@ -62,6 +62,8 @@ All visual decisions live in `Scripts/NevishkTheme.cs` (colours, type scale, spa
 | `Scripts/NevishkBuildings.cs` | Low-poly 3D versions of the drawn buildings (factories, manor, chapel, …) |
 | `Resources/nevishk_rail.json` | The railway (ЖД) traced from the base map, extended into the countryside |
 | `Scripts/NevishkRailroad.cs` | Builds the railway on the terrain: grade, cuttings, embankment, bridges, viaduct, tunnels |
+| `Resources/nevishk_landscape.json` | Where each branch of the Мырла leaves the detailed terrain, for the countryside to continue it |
+| `Scripts/NevishkLandscape.cs` | The country around the city: hills, fields, woods, the eastern range, rivers, villages and roads (unnamed) |
 | `Scripts/NevishkTerrain.cs` | Builds the terrain slab, river water and side walls; height lookup for everything placed on it |
 | `Resources/Fonts` | PT Sans, PT Serif, Playfair Display (all Cyrillic, SIL Open Font License; licences included) |
 | `Plugins/WebGL/NevishkBrowser.jslib` | Deep links and reduced-motion detection in the browser |

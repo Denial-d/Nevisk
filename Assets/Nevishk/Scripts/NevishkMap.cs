@@ -97,8 +97,8 @@ namespace Nevishk
             _ui.EntryShown += (id, isBack) => { if (id != null) WriteHash(id, !isBack && !_applyingHash); };
 
             _cam.panBounds = new Rect(-mapWidth / 2, -_mapDepth / 2, mapWidth, _mapDepth);
-            _cam.maxDistance = mapWidth * 1.15f;
-            _camera.farClipPlane = mapWidth * 4f;
+            _cam.maxDistance = mapWidth * 1.4f;          // far enough out to see the country around the city
+            _camera.farClipPlane = mapWidth * 7f;
             _camera.nearClipPlane = 1f;
             ResetView();
 
@@ -251,8 +251,9 @@ namespace Nevishk
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = NevishkTheme.Fog;
-            RenderSettings.fogStartDistance = mapWidth * 0.75f;
-            RenderSettings.fogEndDistance = mapWidth * 2.1f;
+            // The country fades into evening haze toward the horizon.
+            RenderSettings.fogStartDistance = mapWidth * 0.9f;
+            RenderSettings.fogEndDistance = mapWidth * 3.8f;
             RenderSettings.ambientMode = AmbientMode.Trilight;
             RenderSettings.ambientSkyColor = new Color(0.42f, 0.44f, 0.50f);
             RenderSettings.ambientEquatorColor = new Color(0.32f, 0.30f, 0.28f);
@@ -304,6 +305,7 @@ namespace Nevishk
                 PlanRailroad();          // shapes the ground along the track, so it must come before the meshes
                 BuildTerrain();
                 if (_rail != null) _rail.Build(_root, MatFor, PrimitiveMesh(PrimitiveType.Cube));
+                BuildCountryside();
                 return;
             }
             _terrain = null;   // fall back to the flat map
@@ -345,6 +347,24 @@ namespace Nevishk
             _rail.FlattenTerrain(_terrain);
         }
 
+        void BuildCountryside()
+        {
+            var starts = new List<NevishkLandscape.RiverStart>();
+            var asset = Resources.Load<TextAsset>("nevishk_landscape");
+            if (asset != null)
+                foreach (var o in (MiniJson.Parse(asset.text) as Dictionary<string, object>)["rivers"] as List<object>)
+                {
+                    var r = (Dictionary<string, object>)o;
+                    starts.Add(new NevishkLandscape.RiverStart
+                    {
+                        pos = new Vector3(F(r["x"]), 0f, F(r["z"])),
+                        dir = new Vector3(F(r["dx"]), 0f, F(r["dz"])).normalized,
+                        width = F(r["width"])
+                    });
+                }
+            new NevishkLandscape(_terrain).Build(_root, MatFor, groundMaterial, starts);
+        }
+
         bool NearRail(Vector3 world, float margin) => _rail != null && _rail.DistanceXZ(world) < margin;
 
         void BuildTerrain()
@@ -367,17 +387,8 @@ namespace Nevishk
             water.SetFloat("_Smoothness", 0.9f);
             AddMesh(parent, "Мырла", _terrain.BuildWater(), water);
 
-            // Dark ground far below, the same colour as the sky, so the sunken edges disappear into it.
-            var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            floor.name = "Floor";
-            floor.transform.SetParent(_root, false);
-            floor.transform.localPosition = new Vector3(0, -46f, 0);
-            floor.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-            floor.transform.localScale = new Vector3(mapWidth * 8f, mapWidth * 8f, 1f);
-            var floorMat = NewMat(NevishkTheme.SceneBackground);
-            floorMat.SetFloat("_Smoothness", 0f);
-            floor.GetComponent<Renderer>().sharedMaterial = floorMat;
-            Destroy(floor.GetComponent<Collider>());
+            // A strip down the detailed terrain's edges, so no gap can show where it meets the countryside.
+            AddMesh(parent, "Edge", _terrain.BuildSkirt(), NewMat(new Color(0.40f, 0.39f, 0.30f)));
 
             _cam.groundHeight = p => _terrain.HeightAtWorld(p);
         }
