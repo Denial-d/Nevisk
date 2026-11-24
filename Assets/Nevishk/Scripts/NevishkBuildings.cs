@@ -272,6 +272,10 @@ namespace Nevishk
         // ------------------------------------------------------------------ meshes
 
         static Mesh _cube, _cyl, _prism, _cone;
+        /// Shared meshes for other builders (countryside villages, woods).
+        public static Mesh CubeMesh => UnitCube;
+        public static Mesh GableMesh => PrismMesh;
+        public static Mesh SpireMesh => ConeMesh;
         static Mesh UnitCube => _cube != null ? _cube : (_cube = Primitive(PrimitiveType.Cube));
         static Mesh UnitCylinder => _cyl != null ? _cyl : (_cyl = Primitive(PrimitiveType.Cylinder));
 

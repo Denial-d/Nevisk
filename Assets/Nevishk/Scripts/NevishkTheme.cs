@@ -25,8 +25,8 @@ namespace Nevishk
         public static readonly Color Stamp        = Hex("#E0533F");        // archive stamps, "закрыто"
 
         // 3D scene
-        public static readonly Color SceneBackground = Hex("#141310");
-        public static readonly Color Fog             = Hex("#17150F");   // same as the sky, so the edges dissolve
+        public static readonly Color SceneBackground = Hex("#2A2620");   // dusk haze over the horizon
+        public static readonly Color Fog             = Hex("#2A2620");   // same as the sky, so distant land melts into it
         public static readonly Color GroundTint      = Hex("#A89F8C");   // multiplies the paper-white base map
         public static readonly Color Surroundings    = Hex("#201E1A");
         public static readonly Color Concrete        = Hex("#B5AFA4");

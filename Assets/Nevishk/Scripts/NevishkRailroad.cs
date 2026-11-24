@@ -75,6 +75,13 @@ namespace Nevishk
                 for (int i = 1; i < n; i++) level[i] = Mathf.Clamp(level[i], level[i - 1] - dmax, level[i - 1] + dmax);
                 for (int i = n - 2; i >= 0; i--) level[i] = Mathf.Clamp(level[i], level[i + 1] - dmax, level[i + 1] + dmax);
             }
+            // Water clearance as a floor that itself respects the grade: the lowest profile that clears the
+            // water everywhere and never climbs faster than MaxGrade (rises gradually before the river).
+            var floorProfile = new float[n];
+            for (int i = 0; i < n; i++) floorProfile[i] = clear[i];
+            for (int i = 1; i < n; i++) floorProfile[i] = Mathf.Max(floorProfile[i], floorProfile[i - 1] - dmax);
+            for (int i = n - 2; i >= 0; i--) floorProfile[i] = Mathf.Max(floorProfile[i], floorProfile[i + 1] - dmax);
+            for (int i = 0; i < n; i++) level[i] = Mathf.Max(level[i], floorProfile[i]);
 
             for (int i = 0; i < n; i++)
             {

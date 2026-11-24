@@ -168,10 +168,42 @@ hills = 9 + 26 * smooth(d_out, 0, 160) + n_hill * 9 * smooth(d_out, 10, 80)   # 
 mountains = 140 * smooth(xs, 0.80, 0.97) * (0.45 + 0.55 * n_ridge) * smooth(d_out, 15, 90)
 north_hills = 26 * smooth(1 - ys, 0.75, 1.0) * (0.6 + 0.4 * n_hill) * smooth(d_out, 10, 60)
 h_ext = (hills + mountains + north_hills) * inlet + (-3.0) * (1 - inlet)
-h_ext = -45.0 + (h_ext + 45.0) * fall                 # sink toward the edges
+# (No edge sink: the countryside continues at natural height; Unity's outer landscape carries on from here.)
 h[exterior] = h_ext[exterior]
-mouth = exterior & (h < 0) & (inlet < 0.999) & (fall > 0.98)   # river mouths only, not the sunken rim
+mouth = exterior & (h < 0) & (inlet < 0.999)        # river mouths only
 water[mouth] = 0.0
+
+# ---- the Мырла continues: carve each river mouth onward as a meandering valley to the edge of the grid
+lab_m, n_m = ndi.label(ndi.binary_dilation(mouths, iterations=3))
+chan_ys, chan_xs = np.nonzero(channels)
+river_exits = []
+river_mask = np.zeros((H, W), bool)
+mrng = np.random.RandomState(3)
+for i in range(1, n_m + 1):
+    ys_, xs_ = np.nonzero((lab_m == i) & mouths)
+    if len(xs_) < 5: continue
+    mx, my = xs_.mean(), ys_.mean()
+    near = (chan_xs - mx) ** 2 + (chan_ys - my) ** 2 < 45 ** 2
+    cx_, cy_ = chan_xs[near].mean(), chan_ys[near].mean()
+    d = np.array([mx - cx_, my - cy_]); d /= np.hypot(*d) + 1e-9
+    base = np.arctan2(d[1], d[0]); ang = base
+    x, y = mx, my; path = [(x, y)]
+    while 2 < x < W - 3 and 2 < y < H - 3:
+        ang += mrng.randn() * 0.12 + (base - ang) * 0.08      # meander, drifting back to the main heading
+        x += np.cos(ang) * 3; y += np.sin(ang) * 3
+        path.append((x, y))
+    img = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(img).line(path, fill=255, width=14)
+    river_mask |= (np.asarray(img) > 0) & exterior
+    ex, ey = path[-1]
+    river_exits.append(dict(x=float(ex - PAD - SRC_W / 2), z=float(SRC_H / 2 - (ey - PAD)),
+                            dx=float(np.cos(ang)), dz=float(-np.sin(ang)), width=14.0))
+d_riv = ndi.distance_transform_edt(~river_mask)
+valley = smooth(d_riv, 0, 60)                          # 0 in the river → 1 outside the valley
+h_riv = -5.0 + 4.0 * smooth(d_riv, 0, 5)
+h[exterior] = np.where(river_mask, h_riv, -1.0 + (h + 1.0) * valley)[exterior]
+water[river_mask] = 0.0
+mouth |= river_mask
 
 h = ndi.gaussian_filter(h, 0.8)
 
@@ -196,7 +228,6 @@ alb = alb * tone
 # Keep the hand-drawn ink (outlines, lettering, the railway) like a printed map.
 ink_strength = np.clip((0.75 - lum) / 0.55, 0, 1)
 alb = alb * (1 - 0.78 * ink_strength[..., None])
-alb = alb * (0.08 + 0.92 * fall)[..., None]            # colour fades out with the land
 alb_img = Image.fromarray((np.clip(alb, 0, 1) * 255).astype(np.uint8)).resize((2048, int(2048 * H / W)), Image.BICUBIC)
 alb_img.save(f'{OUTDIR}/nevishk_albedo.png', optimize=True)
 
@@ -216,6 +247,9 @@ with open(f'{OUTDIR}/nevishk_terrain.bytes', 'wb') as f:
     f.write(b'NVT2'); f.write(struct.pack('<ii', GRID_W, GRID_H))
     f.write(struct.pack('<ffff', min_x, max_x, min_z, max_z))
     f.write(hq.tobytes()); f.write(wq.tobytes())
+import json as _json
+_json.dump({'rivers': river_exits}, open(f'{OUTDIR}/nevishk_landscape.json', 'w'), indent=1)
+print('river exits:', len(river_exits))
 print('grid %dx%d  height range %.1f .. %.1f   water cells %d' % (GRID_W, GRID_H, hg.min(), hg.max(), wmask.sum()))
 
 if PREVIEW:
