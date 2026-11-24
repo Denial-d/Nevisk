@@ -69,6 +69,7 @@ namespace Nevishk.EditorTools
             PlayerSettings.runInBackground = true;
 
             AlwaysInclude("TextMeshPro/Distance Field", "TextMeshPro/Mobile/Distance Field");
+            KeepFogVariants();
             AssetDatabase.SaveAssets();
             Debug.Log("[Nevishk] Web build settings applied. Switch platform to Web in Build Profiles if you haven't.");
         }
@@ -125,6 +126,20 @@ namespace Nevishk.EditorTools
             var so = new SerializedObject(rp);
             var p = so.FindProperty("m_ShadowDistance");
             if (p != null && p.floatValue < d) { p.floatValue = d; so.ApplyModifiedProperties(); }
+        }
+
+        /// Fog is switched on from code at runtime, so "Automatic" stripping (which looks at the scene) would remove
+        /// it from every shader in the build. Keep the linear fog variants explicitly.
+        static void KeepFogVariants()
+        {
+            var gs = AssetDatabase.LoadAssetAtPath<Object>("ProjectSettings/GraphicsSettings.asset");
+            if (gs == null) return;
+            var so = new SerializedObject(gs);
+            var strip = so.FindProperty("m_FogStripping");
+            var linear = so.FindProperty("m_FogKeepLinear");
+            if (strip != null) strip.intValue = 1;   // Custom
+            if (linear != null) linear.boolValue = true;
+            so.ApplyModifiedProperties();
         }
 
         static void AlwaysInclude(params string[] shaderNames)

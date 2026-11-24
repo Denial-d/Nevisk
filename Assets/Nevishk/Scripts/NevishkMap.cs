@@ -257,13 +257,14 @@ namespace Nevishk
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = NevishkTheme.Fog;
-            // The country fades into evening haze toward the horizon.
-            RenderSettings.fogStartDistance = mapWidth * 0.9f;
-            RenderSettings.fogEndDistance = mapWidth * 3.8f;
+            // Overcast murk: starts beyond the far side of the city at full zoom-out, so districts stay clear,
+            // and swallows the country well before the horizon.
+            RenderSettings.fogStartDistance = mapWidth * 1.25f;
+            RenderSettings.fogEndDistance = mapWidth * 3.2f;
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.42f, 0.44f, 0.50f);
-            RenderSettings.ambientEquatorColor = new Color(0.32f, 0.30f, 0.28f);
-            RenderSettings.ambientGroundColor = new Color(0.12f, 0.11f, 0.10f);
+            RenderSettings.ambientSkyColor = new Color(0.33f, 0.36f, 0.38f);
+            RenderSettings.ambientEquatorColor = new Color(0.25f, 0.26f, 0.25f);
+            RenderSettings.ambientGroundColor = new Color(0.09f, 0.09f, 0.085f);
 
             // Use the scene's directional light if it has one (the URP template does), otherwise make one.
             // (Runs before any other lights are created, so the only light present is the scene's own.)
@@ -273,7 +274,7 @@ namespace Nevishk
             sun.color = NevishkTheme.SunColor;
             sun.intensity = NevishkTheme.SunIntensity;
             sun.shadows = LightShadows.Soft;
-            sun.shadowStrength = 0.85f;
+            sun.shadowStrength = 0.65f;   // overcast: soft, weak shadows
             sun.transform.rotation = Quaternion.Euler(NevishkTheme.SunAngles);
         }
 
@@ -282,6 +283,7 @@ namespace Nevishk
             var data = _camera.GetUniversalAdditionalCameraData();
             data.renderPostProcessing = true;
             data.antialiasing = AntialiasingMode.FastApproximateAntialiasing;
+            data.requiresDepthTexture = true;   // the fog zone softens where it meets the ground
 
             var go = new GameObject("Atmosphere");
             go.transform.SetParent(transform, false);
@@ -292,9 +294,12 @@ namespace Nevishk
 
             var tone = profile.Add<Tonemapping>(true); tone.mode.Override(TonemappingMode.Neutral);
             var grade = profile.Add<ColorAdjustments>(true);
-            grade.saturation.Override(-16f); grade.contrast.Override(10f);
-            grade.colorFilter.Override(new Color(1f, 0.97f, 0.92f));          // faint sodium-lamp warmth
-            var vig = profile.Add<Vignette>(true); vig.intensity.Override(0.32f); vig.smoothness.Override(0.5f);
+            grade.saturation.Override(-30f); grade.contrast.Override(14f); grade.postExposure.Override(-0.15f);
+            grade.colorFilter.Override(new Color(0.93f, 0.96f, 0.96f));       // cold, damp grey
+            var smh = profile.Add<ShadowsMidtonesHighlights>(true);           // green-grey shadows, pale highlights
+            smh.shadows.Override(new Vector4(0.96f, 1.0f, 0.98f, -0.06f));
+            smh.highlights.Override(new Vector4(1.0f, 1.0f, 1.02f, 0f));
+            var vig = profile.Add<Vignette>(true); vig.intensity.Override(0.40f); vig.smoothness.Override(0.55f);
             var bloom = profile.Add<Bloom>(true); bloom.threshold.Override(1.1f); bloom.intensity.Override(0.45f); // Балаур's fire
             if (!reducedMotion)
             {
@@ -312,6 +317,9 @@ namespace Nevishk
                 BuildTerrain();
                 if (_rail != null) _rail.Build(_root, MatFor, PrimitiveMesh(PrimitiveType.Cube));
                 BuildCountryside();
+                // The zone: fog walls just outside the drawn city and murk over the country beyond.
+                var box = new Rect(-mapWidth / 2f, -_mapDepth / 2f, mapWidth, _mapDepth);
+                NevishkFog.Build(_root, box, new Vector2(4200f, 3800f), NevishkBrowser.PrefersReducedMotion);
                 return;
             }
             _terrain = null;   // fall back to the flat map

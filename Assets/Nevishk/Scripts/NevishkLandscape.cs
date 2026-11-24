@@ -96,6 +96,15 @@ namespace Nevishk
             return _inner.HeightAtWorld(p);
         }
 
+        float LowestInner(float x, float z)
+        {
+            float lo = float.MaxValue, r = Cell;
+            for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -2; dx <= 2; dx++)
+                lo = Mathf.Min(lo, EdgeHeight(x + dx * r * 0.5f, z + dz * r * 0.5f));
+            return lo;
+        }
+
         static float Fbm(float x, float z, int oct)
         {
             float sum = 0, amp = 1, norm = 0, f = 1;
@@ -127,7 +136,14 @@ namespace Nevishk
                 float x = X(i), z = Z(j), d = DistOutside(x, z);
                 int k = j * _nx + i;
                 float edge = EdgeHeight(x, z);
-                if (d <= 0f) { _h[k] = edge - 4f; continue; }              // under the detailed terrain
+                if (d <= 0f)
+                {
+                    // Under the detailed terrain. Near its edge, sit just below it (lowest point around this
+                    // vertex), so the cell straddling the edge doesn't dip into a visible trench; deeper in, drop away.
+                    float inside = Mathf.Min(Mathf.Min(x - _rect.xMin, _rect.xMax - x), Mathf.Min(z - _rect.yMin, _rect.yMax - z));
+                    _h[k] = inside < Cell * 2f ? LowestInner(x, z) - 0.5f : edge - 4f;
+                    continue;
+                }
                 float t = Mathf.SmoothStep(0f, 1f, d / 520f);
                 float h = Mathf.Lerp(edge, Procedural(x, z), t);
                 // Carve river valleys.
@@ -342,7 +358,7 @@ namespace Nevishk
                 px[y * TexSize + x] = GroundColour(wx, wz);
             }
             // Country roads.
-            foreach (var (a, b) in _roads) PaintLine(px, a, b, Road, 1.6f);
+            foreach (var (a, b) in _roads) PaintLine(px, a, b, Road, 1.6f, true);
             tex.SetPixels32(px);
             tex.Apply(true);
             return tex;
@@ -358,13 +374,22 @@ namespace Nevishk
             float fu = (x * cs - z * sn) / 85f, fv = (x * sn + z * cs) / 130f;
             int cu = Mathf.FloorToInt(fu), cv = Mathf.FloorToInt(fv);
             uint hash = (uint)(cu * 73856093 ^ cv * 19349663 ^ Seed);
-            Color c = Fields[hash % (uint)Fields.Length];
+            Color field = Fields[hash % (uint)Fields.Length];
             float edge = Mathf.Min(Mathf.Min(fu - cu, 1 - (fu - cu)), Mathf.Min(fv - cv, 1 - (fv - cv)));
-            if (edge < 0.05f) c = Color.Lerp(c, new Color(0.30f, 0.33f, 0.24f), 0.6f);   // hedgerows
-            c *= 0.92f + 0.16f * Mathf.PerlinNoise(x * 0.02f, z * 0.02f);
-            if (IsForest(x, z)) c = Forest;
-            // Near the city: blend into the detailed terrain's steppe colour.
-            c = Color.Lerp(Steppe, c, Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(120f, 420f, d)));
+            if (edge < 0.05f) field = Color.Lerp(field, new Color(0.30f, 0.33f, 0.24f), 0.6f);   // hedgerows
+
+            // Near the city the farmland peters out field by field into the steppe the detailed terrain is
+            // painted with: each field has its own threshold, and the reach wobbles, so there is no straight band.
+            float reach = d + (Mathf.PerlinNoise(x * 0.004f + 3f, z * 0.004f - 5f) - 0.5f) * 260f;
+            float t = Mathf.InverseLerp(40f, 520f, reach);
+            float thr = 0.15f + 0.8f * ((hash >> 8) % 1000u) / 1000f;
+            float farmed = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(thr - 0.06f, thr + 0.06f, t));
+            // The steppe itself gets the same faint mottling as the detailed terrain, growing in from its edge.
+            float mottle = (Mathf.PerlinNoise(x * 0.035f + 11f, z * 0.035f) - 0.5f) * 0.10f * Mathf.Clamp01(d / 60f);
+            Color steppe = Steppe * (1f + mottle);
+            Color c = Color.Lerp(steppe, field, farmed);
+            c *= 0.92f + 0.16f * Mathf.PerlinNoise(x * 0.02f, z * 0.02f) * Mathf.Clamp01(d / 120f) + 0.08f * (1f - Mathf.Clamp01(d / 120f));
+            if (IsForest(x, z)) c = Color.Lerp(c, Forest, Mathf.Clamp01((d - 120f) / 150f));
             // Mountains and steep ground go to rock.
             float rock = Mathf.Max(Mathf.InverseLerp(65f, 110f, h), Mathf.InverseLerp(0.35f, 0.7f, Slope(x, z)));
             c = Color.Lerp(c, Rock, rock);
@@ -373,23 +398,30 @@ namespace Nevishk
             return c;
         }
 
-        void PaintLine(Color32[] px, Vector2 a, Vector2 b, Color col, float widthPx)
+        void PaintLine(Color32[] px, Vector2 a, Vector2 b, Color col, float widthPx, bool fadeNearCity = false)
         {
             Vector2 A = ToTex(a), B = ToTex(b);
             int steps = Mathf.CeilToInt(Vector2.Distance(A, B) * 2f);
-            Color32 c32 = col;
             for (int s = 0; s <= steps; s++)
             {
                 // A gentle wobble so roads aren't ruler-straight.
                 float t = s / (float)Mathf.Max(steps, 1);
                 Vector2 p = Vector2.Lerp(A, B, t) + Vector2.Perpendicular((B - A).normalized) * Mathf.Sin(t * 9f + A.x) * 6f * Mathf.Sin(t * Mathf.PI);
+                // Dirt tracks thin out and vanish into the steppe before they reach the detailed terrain.
+                float strength = 1f;
+                if (fadeNearCity)
+                {
+                    Vector2 w = Vector2.Lerp(a, b, t);
+                    strength = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(30f, 260f, DistOutside(w.x, w.y)));
+                    if (strength <= 0.01f) continue;
+                }
                 int r = Mathf.CeilToInt(widthPx);
                 for (int dy = -r; dy <= r; dy++)
                 for (int dx = -r; dx <= r; dx++)
                 {
                     int x = Mathf.RoundToInt(p.x) + dx, y = Mathf.RoundToInt(p.y) + dy;
                     if (x < 0 || y < 0 || x >= TexSize || y >= TexSize || dx * dx + dy * dy > widthPx * widthPx) continue;
-                    px[y * TexSize + x] = c32;
+                    px[y * TexSize + x] = strength >= 0.99f ? (Color32)col : (Color32)Color.Lerp(px[y * TexSize + x], col, strength);
                 }
             }
         }
@@ -405,13 +437,17 @@ namespace Nevishk
             for (int tx = 0; tx < _nx - 1; tx += tile)
             {
                 int w = Mathf.Min(tile, _nx - 1 - tx) + 1, hgt = Mathf.Min(tile, _nz - 1 - ty) + 1;
-                var v = new Vector3[w * hgt]; var uv = new Vector2[w * hgt];
+                var v = new Vector3[w * hgt]; var uv = new Vector2[w * hgt]; var nrm = new Vector3[w * hgt];
                 for (int y = 0; y < hgt; y++)
                 for (int x = 0; x < w; x++)
                 {
                     int i = tx + x, j = ty + y;
                     v[y * w + x] = new Vector3(X(i), _h[j * _nx + i], Z(j));
                     uv[y * w + x] = new Vector2(i / (float)(_nx - 1), 1f - j / (float)(_nz - 1));
+                    // Central differences on the whole grid, so neighbouring tiles light identically at their seams.
+                    float hl = _h[j * _nx + Mathf.Max(i - 1, 0)], hr = _h[j * _nx + Mathf.Min(i + 1, _nx - 1)];
+                    float hn = _h[Mathf.Max(j - 1, 0) * _nx + i], hs = _h[Mathf.Min(j + 1, _nz - 1) * _nx + i];
+                    nrm[y * w + x] = new Vector3(hl - hr, 2f * Cell, hs - hn).normalized;   // z decreases with j
                 }
                 var t = new int[(w - 1) * (hgt - 1) * 6]; int q = 0;
                 for (int y = 0; y < hgt - 1; y++)
@@ -421,8 +457,8 @@ namespace Nevishk
                     t[q++] = a; t[q++] = b; t[q++] = c; t[q++] = b; t[q++] = d; t[q++] = c;
                 }
                 var m = new Mesh { name = $"Countryside {tx},{ty}" };
-                m.vertices = v; m.uv = uv; m.triangles = t;
-                m.RecalculateNormals(); m.RecalculateBounds();
+                m.vertices = v; m.uv = uv; m.triangles = t; m.normals = nrm;
+                m.RecalculateBounds();
                 list.Add(m);
             }
             return list;

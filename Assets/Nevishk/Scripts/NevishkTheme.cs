@@ -25,8 +25,8 @@ namespace Nevishk
         public static readonly Color Stamp        = Hex("#E0533F");        // archive stamps, "закрыто"
 
         // 3D scene
-        public static readonly Color SceneBackground = Hex("#2A2620");   // dusk haze over the horizon
-        public static readonly Color Fog             = Hex("#2A2620");   // same as the sky, so distant land melts into it
+        public static readonly Color SceneBackground = Hex("#232624");   // overcast murk over the horizon
+        public static readonly Color Fog             = Hex("#2B2E2C");   // close to the sky, so distant land melts into it
         public static readonly Color GroundTint      = Hex("#A89F8C");   // multiplies the paper-white base map
         public static readonly Color Surroundings    = Hex("#201E1A");
         public static readonly Color Concrete        = Hex("#B5AFA4");
@@ -34,9 +34,9 @@ namespace Nevishk
         public static readonly Color TerrainTint     = Hex("#E8E2D6");   // multiplies the generated ground colours
         public static readonly Color Water           = Hex("#1B2A2E");
         public static readonly Color SlabSide        = Hex("#2C2924");                         // how much district colour reaches buildings
-        public static readonly Color SunColor        = Hex("#FFE1BC");
-        public const float SunIntensity = 1.25f;
-        public static readonly Vector3 SunAngles     = new Vector3(32f, -40f, 0f); // low sun → long shadows
+        public static readonly Color SunColor        = Hex("#D8D6CC");   // pale, filtered through cloud
+        public const float SunIntensity = 0.9f;
+        public static readonly Vector3 SunAngles     = new Vector3(40f, -40f, 0f); // high, hidden sun → short, soft shadows
         public static readonly Color LabelOutline    = Hex("#0B0A07", 0.9f);
         public static readonly Color LabelPlate      = Hex("#12110D", 0.72f);   // subtle dark box behind map labels
 
