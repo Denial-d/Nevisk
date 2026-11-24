@@ -96,17 +96,20 @@ Shader "Nevishk/VolumeFog"
             float Density(float3 p, float t)
             {
                 float sdf = RingDistance(p.xz, t);
-                // Clear inside; the bank rises quickly at the oval's edge, then thins out gradually over the
-                // next kilometre or so instead of ending in a band; patchy murk takes over beyond it.
-                float wall = smoothstep(-30.0, 90.0, sdf) * exp(-max(sdf - 90.0, 0.0) / 520.0);
-                float murk = smoothstep(60.0, 420.0, sdf);
-                if (murk > 0.002)
+                // Clear inside; the bank rises quickly at the oval's edge and thins out over the next few hundred
+                // metres. Further out, both it and the murk only exist inside drifting patches, with open country
+                // between them: big soft-edged zones, so there are no hard edges.
+                float wall = smoothstep(-30.0, 90.0, sdf) * exp(-max(sdf - 90.0, 0.0) / 300.0);
+                float murk = 0.8 * smoothstep(60.0, 420.0, sdf);
+                if (sdf > 100.0)
                 {
-                    // Over the country the murk lies in drifting patches: big soft-edged zones of fog and clear air.
                     float z = SAMPLE_TEXTURE3D_LOD(_Noise3D, sampler_Noise3D,
-                                                   float3(p.x - _Wind.x * t * 0.35, t * 0.8, p.z - _Wind.z * t * 0.35) * (1.0 / 6500.0), 0).r;
-                    murk *= smoothstep(0.42, 0.66, z);
+                                                   float3(p.x - _Wind.x * t * 0.35, t * 0.8, p.z - _Wind.z * t * 0.35) * (1.0 / 4200.0), 0).r;
+                    float zones = smoothstep(0.50, 0.68, z);
+                    wall *= lerp(1.0, zones, smoothstep(120.0, 420.0, sdf));
+                    murk *= zones;
                 }
+                else murk = 0.0;
                 float2 edge = abs(p.xz) / _Extent.xy;
                 float amount = max(murk, wall) * (1.0 - smoothstep(0.8, 1.0, max(edge.x, edge.y)));
                 if (amount < 0.002) return 0.0;
