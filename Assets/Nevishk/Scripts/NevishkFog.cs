@@ -6,10 +6,11 @@ using UnityEngine.Rendering;
 namespace Nevishk
 {
     /// <summary>
-    /// The zone around Невишк: drifting fog walls that ring the city just outside its districts, and layers of
-    /// murk lying over the countryside beyond them. Inside the ring the air stays clear, so every district reads;
-    /// outside, the rest of the country sinks into mist with only hilltops and the eastern range showing.
-    /// Uses the Nevishk/Fog shader (Resources/Shaders); does nothing if it's missing.
+    /// The zone around Невишк. Inside a ring just outside the drawn city the air stays clear, so every district
+    /// reads; at the ring a tall bank of rising mist cuts the city off, and beyond it the rest of the country lies
+    /// under drifting murk with only hilltops and the eastern range showing.
+    /// Normally a raymarched volume (Nevishk/VolumeFog); on hardware without 3D textures it falls back to the
+    /// older layered sheets (Nevishk/Fog).
     /// </summary>
     public static class NevishkFog
     {
@@ -19,6 +20,118 @@ namespace Nevishk
         /// <param name="outer">How far out the countryside reaches (half extents), for the murk layers.</param>
         /// <param name="ground">Ground height at world (x, z), city terrain and countryside alike.</param>
         public static void Build(Transform parent, Rect box, Vector2 outer, Func<float, float, float> ground, bool reducedMotion)
+        {
+            var c0 = box.center;
+            float rhx = box.width / 2f + 90f, rhz = box.height / 2f + 95f, rCorner = 160f;
+            var volume = Shader.Find("Nevishk/VolumeFog");
+            if (volume != null && volume.isSupported && SystemInfo.supports3DTextures)
+            {
+                BuildVolume(parent, volume, c0, rhx, rhz, rCorner, outer, ground, reducedMotion);
+                return;
+            }
+            Debug.Log("[Nevishk] Volumetric fog not supported here; using layered fog.");
+            BuildLayers(parent, box, outer, ground, reducedMotion);
+        }
+
+        // ------------------------------------------------------------------ volumetric
+
+        static void BuildVolume(Transform parent, Shader shader, Vector2 c, float hx, float hz, float corner,
+                                Vector2 outer, Func<float, float, float> ground, bool reducedMotion)
+        {
+            const float top = 260f, bottom = -60f;
+            var grid = GroundGrid(ground, outer, SheetCell);
+
+            var m = new Material(shader) { name = "Volume fog", renderQueue = (int)RenderQueue.Transparent - 50 };
+            m.SetColor("_Color", new Color(0.40f, 0.43f, 0.42f));
+            m.SetColor("_LitColor", new Color(0.70f, 0.72f, 0.69f));
+            m.SetFloat("_Density", 0.016f);
+            m.SetTexture("_Noise3D", Noise3D(64));
+            m.SetFloat("_NoiseScale", 1f / 260f);
+            m.SetVector("_Wind", new Vector4(5f, 0f, 2f, 3f));
+            m.SetFloat("_Speed", reducedMotion ? 0f : 1f);
+            m.SetTexture("_Ground", GroundTexture(grid.smooth, grid.nx, grid.nz));
+            // Texel (i, j) holds the ground at (-outer.x + i*cell, -outer.y + j*cell); sample at texel centres.
+            m.SetVector("_GroundST", new Vector4(1f / (SheetCell * grid.nx), 1f / (SheetCell * grid.nz),
+                                                 (outer.x / SheetCell + 0.5f) / grid.nx, (outer.y / SheetCell + 0.5f) / grid.nz));
+            m.SetVector("_Ring", new Vector4(c.x, c.y, hx, hz));
+            m.SetFloat("_RingCorner", corner);
+            m.SetVector("_Extent", new Vector4(outer.x, outer.y, top, bottom));
+            m.SetFloat("_Height", 45f);
+            m.SetFloat("_WallHeight", 140f);
+
+            var go = new GameObject("Fog Zone", typeof(MeshFilter), typeof(MeshRenderer));
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(0f, (top + bottom) / 2f, 0f);
+            go.transform.localScale = new Vector3(outer.x * 2f, top - bottom, outer.y * 2f);
+            go.GetComponent<MeshFilter>().sharedMesh = NevishkBuildings.CubeMesh;
+            var r = go.GetComponent<MeshRenderer>();
+            r.sharedMaterial = m;
+            r.shadowCastingMode = ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            Debug.Log("[Nevishk] Fog zone: volumetric.");
+        }
+
+        static Texture2D GroundTexture(float[] h, int nx, int nz)
+        {
+            bool half = SystemInfo.SupportsTextureFormat(TextureFormat.RHalf);
+            var tex = new Texture2D(nx, nz, half ? TextureFormat.RHalf : TextureFormat.RFloat, false, true)
+            { name = "Fog ground", wrapMode = TextureWrapMode.Clamp, filterMode = half ? FilterMode.Bilinear : FilterMode.Point };
+            if (half)
+            {
+                var data = new ushort[h.Length];
+                for (int k = 0; k < h.Length; k++) data[k] = Mathf.FloatToHalf(h[k]);
+                tex.SetPixelData(data, 0);
+            }
+            else tex.SetPixelData(h, 0);
+            tex.Apply(false, true);
+            return tex;
+        }
+
+        /// Tileable 3D fractal value noise.
+        static Texture3D Noise3D(int size)
+        {
+            const int L = 16;
+            var rng = new System.Random(1931);
+            var lattice = new float[L * L * L];
+            for (int i = 0; i < lattice.Length; i++) lattice[i] = (float)rng.NextDouble();
+            float Lat(int x, int y, int z, int period) =>
+                lattice[(((z % period) + period) % period) * L * L + (((y % period) + period) % period) * L + (((x % period) + period) % period)];
+            float Value(float x, float y, float z, int period)
+            {
+                int x0 = Mathf.FloorToInt(x), y0 = Mathf.FloorToInt(y), z0 = Mathf.FloorToInt(z);
+                float fx = x - x0, fy = y - y0, fz = z - z0;
+                fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz);
+                float a = Mathf.Lerp(Lat(x0, y0, z0, period), Lat(x0 + 1, y0, z0, period), fx);
+                float b = Mathf.Lerp(Lat(x0, y0 + 1, z0, period), Lat(x0 + 1, y0 + 1, z0, period), fx);
+                float cc = Mathf.Lerp(Lat(x0, y0, z0 + 1, period), Lat(x0 + 1, y0, z0 + 1, period), fx);
+                float d = Mathf.Lerp(Lat(x0, y0 + 1, z0 + 1, period), Lat(x0 + 1, y0 + 1, z0 + 1, period), fx);
+                return Mathf.Lerp(Mathf.Lerp(a, b, fy), Mathf.Lerp(cc, d, fy), fz);
+            }
+            var px = new Color32[size * size * size];
+            for (int z = 0; z < size; z++)
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float sum = 0f, amp = 0.5f, norm = 0f;
+                for (int period = 4; period <= L; period *= 2)
+                {
+                    float k = period / (float)size;
+                    sum += Value(x * k, y * k, z * k, period) * amp;
+                    norm += amp; amp *= 0.5f;
+                }
+                byte v = (byte)Mathf.Clamp(Mathf.RoundToInt(sum / norm * 255f), 0, 255);
+                px[(z * size + y) * size + x] = new Color32(v, v, v, 255);
+            }
+            var tex = new Texture3D(size, size, size, TextureFormat.RGBA32, false)
+            { name = "Fog noise 3D", wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Bilinear };
+            tex.SetPixels32(px);
+            tex.Apply(false, true);
+            return tex;
+        }
+
+        // ------------------------------------------------------------------ layered fallback
+
+        static void BuildLayers(Transform parent, Rect box, Vector2 outer, Func<float, float, float> ground, bool reducedMotion)
         {
             var shader = Shader.Find("Nevishk/Fog");
             if (shader == null || !shader.isSupported)
