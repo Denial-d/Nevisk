@@ -273,6 +273,60 @@ for s in mapB_list:
         id='lm_' + str(len(landmarks)).zfill(3), name=disp, category=CATEGORY.get(s['color'], 'gathering'),
         district=dist or nearest_district(uv), uv=uv, text=text, docs=docs))
 
+# Landmark photos, keyed by display name so they survive id renumbering.
+LANDMARK_IMAGES = {
+    "Безмолвные плиты": [
+        [
+            "ush_plity",
+            "Безмолвные плиты"
+        ],
+        [
+            "ush_podezd",
+            "Подъезд"
+        ]
+    ],
+    "Аллея «Память»": [
+        [
+            "ush_alleya",
+            "Аллея"
+        ],
+        [
+            "ush_alleya2",
+            "Аллея"
+        ]
+    ],
+    "Гидросброс (водопад)": [
+        [
+            "ush_vodopad",
+            "Водопад"
+        ]
+    ],
+    "Фонтан «Забвение»": [
+        [
+            "ush_fontan",
+            "Фонтан"
+        ]
+    ],
+    "Невишк Prime City": [
+        [
+            "nc_prime",
+            "Невишк Prime City"
+        ],
+        [
+            "nc_kofe",
+            "Кофемырлия, первый этаж «Обсидиана»"
+        ]
+    ],
+    "Балаур": [
+        [
+            "nc_balaur",
+            "Балаур"
+        ]
+    ]
+}
+for l in landmarks:
+    l['images'] = [dict(file=f, caption=c) for f, c in LANDMARK_IMAGES.get(l['name'], [])]
+
 data = dict(
     city=dict(name='Невишк', tagline='Невишк — столица республики Тамаш', mapImage='nevishk_basemap',
               mapPixelSize=[IMG_W, IMG_H]),

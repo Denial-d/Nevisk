@@ -56,6 +56,7 @@ namespace Nevishk
         public float[] uv;
         public string text;
         public string[] docs;
+        public ImageInfo[] images;
     }
 
     [Serializable]

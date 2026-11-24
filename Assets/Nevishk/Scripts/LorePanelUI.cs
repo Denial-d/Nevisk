@@ -187,17 +187,10 @@ namespace Nevishk
             if (!string.IsNullOrEmpty(d.status)) meta.Add(StatusRu(d.status));
             _meta.text = string.Join("   ·   ", meta);
 
-            var photos = d.images ?? Array.Empty<ImageInfo>();
-            if (photos.Length > 0) AddPhoto(photos[0], true);
-
+            AddLeadPhoto(d.images);
             if (!string.IsNullOrEmpty(d.text)) AddBody(d.text);
             else AddNote("Лор района ещё пишется.");
-
-            if (photos.Length > 1)
-            {
-                AddSection($"Снимки · {photos.Length - 1}");
-                AddPhotoGrid(photos, 1);
-            }
+            AddMorePhotos(d.images);
 
             AddDocRows(d.docs);
 
@@ -234,8 +227,10 @@ namespace Nevishk
                 ? $"Район {dist.number} · <link=\"d:{dist.id}\"><color={T.ToHex(T.Accent)}><u>{dist.name}</u></color></link>"
                 : "";
 
+            AddLeadPhoto(l.images);
             if (!string.IsNullOrEmpty(l.text)) AddBody(l.text);
             else AddNote("Описания пока нет.");
+            AddMorePhotos(l.images);
 
             AddDocRows(l.docs);
             if (dist != null)
@@ -416,6 +411,19 @@ namespace Nevishk
             if (t == null) Debug.LogWarning($"[Nevishk] Image Resources/Images/{file} missing.");
             _photoCache[file] = t;
             return t;
+        }
+
+        /// First photo above the text; the rest go in a «Снимки» gallery after it.
+        void AddLeadPhoto(ImageInfo[] photos)
+        {
+            if (photos != null && photos.Length > 0) AddPhoto(photos[0], true);
+        }
+
+        void AddMorePhotos(ImageInfo[] photos)
+        {
+            if (photos == null || photos.Length < 2) return;
+            AddSection($"Снимки · {photos.Length - 1}");
+            AddPhotoGrid(photos, 1);
         }
 
         /// One photo across the full column, at its own aspect ratio, with the caption under it.
