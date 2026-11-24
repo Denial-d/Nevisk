@@ -50,13 +50,13 @@ def flood(seed, passable):
 free = ~wall
 # district id -> (seed px, plateau height in units)
 DISTRICTS = {
-    'krasnyi_elektrovoi': (P(960, 115), 13.0),
-    'baltag':             (P(841, 277), 11.0),
-    'mednye_luzhi':       (P(640, 390), 8.0),
-    'nevishk_tech':       (P(300, 250), 10.0),
-    'loom_of_echoes':     (P(470, 95), 16.0),
-    'novyi_tsentr':       (P(700, 180), 9.0),
-    'imperial':           (P(505, 240), 14.0),   # old centre on a rise
+    'krasnyi_elektrovoi': (P(960, 115), 6.5),
+    'baltag':             (P(841, 277), 5.5),
+    'mednye_luzhi':       (P(640, 390), 4.0),
+    'nevishk_tech':       (P(300, 250), 5.0),
+    'loom_of_echoes':     (P(470, 95), 8.0),
+    'novyi_tsentr':       (P(700, 180), 4.5),
+    'imperial':           (P(505, 240), 7.0),   # old centre on a rise
 }
 plateau = np.zeros((H, W), np.float32)
 land = np.zeros((H, W), bool)
@@ -70,7 +70,7 @@ kam = Image.new('L', (W, H), 0)
 ImageDraw.Draw(kam).polygon([P(608, 84), P(640, 74), P(700, 68), P(762, 80), P(774, 100), P(736, 110),
                              P(700, 124), P(660, 114), P(614, 108)], fill=255)
 kam = np.asarray(kam) > 0
-plateau[kam & ~land] = 9.0
+plateau[kam & ~land] = 4.5
 land |= kam
 
 ravine = ndi.binary_closing(beige, iterations=4)
@@ -126,7 +126,7 @@ water = np.full((H, W), np.nan, np.float32)
 
 # ---- city land: banks rise from the water to each district's plateau
 d_land = ndi.distance_transform_edt(landish)
-bank = smooth(d_land, 0, 16)                                 # wide, soft river banks
+bank = smooth(d_land, 0, 32)                                 # wide, gentle river banks
 h_land = 1.2 + (plateau_full - 1.2) * bank + n_low * 1.4 * bank
 h[landish] = h_land[landish]
 
@@ -137,17 +137,17 @@ water[channels] = 0.0
 
 # ---- Ущелье: ravine ~32 units below the rim, steep walls
 d_rav = ndi.distance_transform_edt(ravine)
-rim = 12.0
+rim = 6.0
 floor_relief = fbm(4, 22) * 3.0 + fbm(2, 6) * 0.8                 # hummocks for the forest floor
 h_rav = rim + (-32.0 - rim) * smooth(d_rav, 0, 20) + floor_relief * smooth(d_rav, 12, 30)
 h[ravine] = h_rav[ravine]
 
 # ---- park (Аллея Бужорилор): low, with ponds
-h[park] = (5.0 + n_low * 0.8)[park]
+h[park] = (2.5 + n_low * 0.5)[park]
 
 # ---- ponds in the park and around Камыши
 pond_d = ndi.distance_transform_edt(ponds)
-base_here = np.where(park, 5.0, 9.0)
+base_here = np.where(park, 2.5, 4.5)
 h[ponds] = (base_here - 1.5 - 3.0 * smooth(pond_d, 0, 4))[ponds]
 water[ponds] = (base_here - 1.0)[ponds]
 
@@ -164,7 +164,7 @@ ys = ((np.arange(H) - PAD) / SRC_H)[:, None].repeat(W, 1)
 jj, ii = np.mgrid[0:H, 0:W]
 d_border = np.minimum(np.minimum(ii, W - 1 - ii), np.minimum(jj, H - 1 - jj)) + fbm(3, 45) * 35
 fall = smooth(d_border, 5, PAD * 0.9)
-hills = 9 + 26 * smooth(d_out, 0, 160) + n_hill * 9 * smooth(d_out, 10, 80)   # meets the city edge at ~bank height
+hills = 4 + 26 * smooth(d_out, 30, 220) + n_hill * 9 * smooth(d_out, 10, 80)   # meets the city edge at ~bank height
 mountains = 140 * smooth(xs, 0.80, 0.97) * (0.45 + 0.55 * n_ridge) * smooth(d_out, 15, 90)
 north_hills = 26 * smooth(1 - ys, 0.75, 1.0) * (0.6 + 0.4 * n_hill) * smooth(d_out, 10, 60)
 h_ext = (hills + mountains + north_hills) * inlet + (-3.0) * (1 - inlet)
@@ -246,7 +246,53 @@ with open(f'{OUTDIR}/nevishk_terrain.bytes', 'wb') as f:
     f.write(struct.pack('<ffff', min_x, max_x, min_z, max_z))
     f.write(hq.tobytes()); f.write(wq.tobytes())
 import json as _json
-_json.dump({'rivers': river_exits}, open(f'{OUTDIR}/nevishk_landscape.json', 'w'), indent=1)
+# ---- stone paths: around and across Аллея Бужорилор, and Аллея «Память» winding through Ущелье
+from skimage.measure import find_contours
+from skimage.graph import route_through_array
+def to_world(pts):
+    return [[round(float(x - PAD - SRC_W / 2), 2), round(float(SRC_H / 2 - (y - PAD)), 2)] for x, y in pts]
+def resample(pts, step):
+    pts = np.asarray(pts, float)
+    seg = np.hypot(*np.diff(pts, axis=0).T); sacc = np.concatenate([[0], np.cumsum(seg)])
+    t = np.arange(0, sacc[-1], step)
+    return np.stack([np.interp(t, sacc, pts[:, 0]), np.interp(t, sacc, pts[:, 1])], 1)
+def split_dry(pts, wet):
+    out, cur = [], []
+    for x, y in pts:
+        if wet[int(round(y)), int(round(x))]:
+            if len(cur) > 3: out.append(cur)
+            cur = []
+        else: cur.append((x, y))
+    if len(cur) > 3: out.append(cur)
+    return out
+paths = []
+pond_zone = ndi.binary_dilation(ponds, iterations=5)
+inner_park = ndi.binary_erosion(park, iterations=9)
+ring = max(find_contours(inner_park.astype(float), 0.5), key=len)            # (row, col)
+ring = resample([(c, r) for r, c in ring[::3]], 3.0)
+ring = np.vstack([ring, ring[:1]])
+for seg_ in split_dry(ring, pond_zone): paths.append(dict(kind='park', points=to_world(seg_)))
+pys, pxs = np.nonzero(inner_park)
+cxp, cyp = pxs.mean(), pys.mean()
+cov = np.cov(np.vstack([pxs - cxp, pys - cyp])); evals, evecs = np.linalg.eigh(cov)
+for v_ in (evecs[:, 1], evecs[:, 0]):                                       # along and across the park
+    line = [(cxp + v_[0] * t, cyp + v_[1] * t) for t in np.arange(-150, 150, 3)]
+    line = [(x, y) for x, y in line if 0 <= int(y) < H and 0 <= int(x) < W and inner_park[int(y), int(x)]]
+    for seg_ in split_dry(line, pond_zone): paths.append(dict(kind='park', points=to_world(seg_)))
+# Аллея «Память»: from the foot of the waterfall down through the ravine, via the fountain.
+floor_cost = np.where(ravine & (h < -18), 1.0, 40.0)
+way = [P(492, 330), P(437, 383), P(398, 362), P(357, 352)]   # waterfall foot → fountain → into the ravine
+alley = []
+for a_, b_ in zip(way[:-1], way[1:]):
+    seg_, _ = route_through_array(floor_cost, (a_[1], a_[0]), (b_[1], b_[0]), fully_connected=True, geometric=True)
+    alley += [(c, r) for r, c in seg_]
+alley = np.array(alley, float)
+k_ = 7
+padded = np.vstack([np.repeat(alley[:1], k_, 0), alley, np.repeat(alley[-1:], k_, 0)])
+alley = np.stack([np.convolve(padded[:, i], np.ones(2 * k_ + 1) / (2 * k_ + 1), 'valid') for i in (0, 1)], 1)
+paths.append(dict(kind='memory', points=to_world(resample(alley, 3.0))))
+_json.dump({'rivers': river_exits, 'paths': paths}, open(f'{OUTDIR}/nevishk_landscape.json', 'w'), indent=1)
+print('paths:', [(p_['kind'], len(p_['points'])) for p_ in paths])
 print('river exits:', len(river_exits))
 print('grid %dx%d  height range %.1f .. %.1f   water cells %d' % (GRID_W, GRID_H, hg.min(), hg.max(), wmask.sum()))
 

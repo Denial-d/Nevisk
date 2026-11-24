@@ -78,8 +78,10 @@ namespace Nevishk
 
             SetUpAtmosphere();
             BuildGround();
+            LoadPaths();
             BuildModels();
             BuildBlocksAndTrees();
+            BuildPaths();
             BuildSpecialLandmarks();
             BuildPins();
 
@@ -404,81 +406,249 @@ namespace Nevishk
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
+        struct BridgeInfo { public Vector3 a, b; public float yaw, width; }
+        readonly List<BridgeInfo> _bridges = new List<BridgeInfo>();
+
         void BuildModels()
         {
-            var asset = Resources.Load<TextAsset>("nevishk_models");
-            if (asset == null) return;
-            var root = new GameObject("Drawn Buildings").transform;
+            var root = new GameObject("Buildings").transform;
             root.SetParent(_root, false);
-            var list = (MiniJson.Parse(asset.text) as Dictionary<string, object>)["models"] as List<object>;
             int seed = 11;
-            foreach (var o in list)
-            {
-                var m = (Dictionary<string, object>)o;
-                var uv = (List<object>)m["uv"]; var size = (List<object>)m["size"];
-                float u = F(uv[0]), v = F(uv[1]), w = PxToWorld(F(size[0])), d = PxToWorld(F(size[1])), yaw = F(m["yaw"]);
-                // Stand on the lowest ground under the footprint so nothing floats.
-                float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
-                float g = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
-                                    Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv)));
-                g = Mathf.Min(g, Ground(u, v)) - 0.4f;
-                Vector3 pos = UvToWorld(new[] { u, v }, g);
-                if ((string)m["type"] == "bridge")
-                {
-                    // Deck a few metres above the higher of its two ends (root's local x = along the bridge).
-                    Vector3 axis = Quaternion.Euler(0, yaw, 0) * Vector3.right;
-                    Vector3 c = UvToWorld(new[] { u, v });
-                    float e0 = _terrain != null ? _terrain.HeightAtWorld(c - axis * w * 0.5f) : 0f;
-                    float e1 = _terrain != null ? _terrain.HeightAtWorld(c + axis * w * 0.5f) : 0f;
-                    pos = new Vector3(c.x, Mathf.Max(e0, e1, Ground(u, v)) + 4f, c.z);
-                }
-                var built = NevishkBuildings.Build((string)m["type"], root, pos, w, d, yaw, MatFor, seed++);
-                var spot = new ModelSpot
-                {
-                    u = u, v = v, rPx = Mathf.Max(F(size[0]), F(size[1])) * 0.5f,
-                    pos = pos, top = built.height, radius = built.radius, label = (string)m["label"]
-                };
-                _models.Add(spot);
-                string lid = (string)m["landmark"];
-                if (!string.IsNullOrEmpty(lid)) _modelByLandmark[lid] = spot;
-            }
 
-            // Every other place on the map gets a structure too (checkpoints, bridges, the fountain, power plants…).
+            // 1. Buildings drawn on the base map.
+            var asset = Resources.Load<TextAsset>("nevishk_models");
+            if (asset != null)
+                foreach (var o in (MiniJson.Parse(asset.text) as Dictionary<string, object>)["models"] as List<object>)
+                {
+                    var m = (Dictionary<string, object>)o;
+                    var uv = (List<object>)m["uv"]; var size = (List<object>)m["size"];
+                    PlaceAndBuild(root, (string)m["type"], F(uv[0]), F(uv[1]), PxToWorld(F(size[0])), PxToWorld(F(size[1])),
+                                  F(m["yaw"]), true, (string)m["label"], (string)m["landmark"], seed++);
+                }
+
+            // 2. A structure for every other place (checkpoints, bridges, the fountain, power plants…).
             foreach (var l in _db.landmarks)
             {
                 if (_modelByLandmark.ContainsKey(l.id)) continue;
                 var spec = NevishkBuildings.ForLandmark(l.name);
                 if (spec == null) continue;
                 var (type, wPx, dPx) = spec.Value;
-                float u = l.uv[0], v = l.uv[1];
-                float w = PxToWorld(wPx), d = PxToWorld(dPx);
                 int hash = 0; foreach (char ch in l.id + l.name) hash = hash * 31 + ch;
                 hash &= 0x7fffffff;
                 float yaw = (hash % 4) * 90f + (hash / 4 % 21 - 10);
-                Vector3 pos;
-                if (type == "bridge")
+
+                // A checkpoint next to a bridge stands on the bridge, its barrier across the roadway.
+                if (type == "checkpoint" && NearestBridge(UvToWorld(l.uv), 90f, out var br, out float t))
                 {
-                    if (FindCrossing(u, v, out var centre, out var axisYaw, out var length, out var deckY))
-                    { pos = new Vector3(centre.x, deckY, centre.z); yaw = axisYaw; w = length; }
-                    else pos = OnGround(l.uv, 4f);   // nothing to cross: a footbridge on piers
+                    Vector3 p = Vector3.Lerp(br.a, br.b, Mathf.Clamp(t, 0.2f, 0.8f));
+                    var cb = NevishkBuildings.Build("checkpoint_bridge", root, p, br.width, 4f, br.yaw + 90f, MatFor, seed++);
+                    Register(l.id, l.uv[0], l.uv[1], p, cb, 6f, l.name);
+                    continue;
                 }
-                else
-                {
-                    float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
-                    float g = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
-                                        Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv)));
-                    g = Mathf.Min(g, Ground(u, v)) - 0.4f;
-                    pos = UvToWorld(l.uv, g);
-                }
-                var built = NevishkBuildings.Build(type, root, pos, w, d, yaw, MatFor, seed++);
-                var spot = new ModelSpot
-                {
-                    u = u, v = v, rPx = Mathf.Max(w, d) * 0.5f * _db.city.mapPixelSize[0] / mapWidth,
-                    pos = pos, top = built.height, radius = built.radius, label = l.name
-                };
-                _models.Add(spot);
-                _modelByLandmark[l.id] = spot;
+                PlaceAndBuild(root, type, l.uv[0], l.uv[1], PxToWorld(wPx), PxToWorld(dPx), yaw, false, l.name, l.id, seed++);
             }
+        }
+
+        void PlaceAndBuild(Transform root, string type, float u, float v, float w, float d, float yaw, bool fixedYaw,
+                           string label, string landmarkId, int seed)
+        {
+            Vector3 pos; float pitch = 0f;
+            if (type == "bridge")
+            {
+                Vector3 c = UvToWorld(new[] { u, v });
+                if (!fixedYaw && FindCrossing(u, v, out var centre, out var axisYaw, out var length, out _))
+                { c = centre; yaw = axisYaw; w = length; }
+                // The deck runs straight from bank to bank, sloping if the banks differ,
+                // and each end goes a few metres into the ground so it never stops in the air.
+                Vector3 axis = Quaternion.Euler(0, yaw, 0) * Vector3.right;
+                float L = w + 10f;
+                Vector3 a = c - axis * L / 2, b = c + axis * L / 2;
+                a.y = DeckEnd(a); b.y = DeckEnd(b);
+                // Keep the whole deck clear of the ground (a rim or bank can rise mid-span) …
+                float lift = 0f;
+                for (int k = 1; k < 30; k++)
+                {
+                    Vector3 q = Vector3.Lerp(a, b, k / 30f);
+                    if (_terrain != null) lift = Mathf.Max(lift, _terrain.HeightAtWorld(q) + 0.6f - q.y);
+                }
+                a.y += lift; b.y += lift;
+                // … and give each end a stone abutment down into the ground, so it never ends in the air.
+                foreach (var end in new[] { a, b })
+                {
+                    float g = _terrain != null ? _terrain.HeightAtWorld(end) : end.y - 2f;
+                    float top = end.y - 1.4f, bottom = Mathf.Min(g, top) - 3f;
+                    Prop("Abutment", PrimitiveMesh(PrimitiveType.Cube), new Vector3(end.x, (top + bottom) / 2, end.z),
+                         new Vector3(d + 2f, top - bottom, d + 2f), new Color(0.52f, 0.50f, 0.46f), 0.05f)
+                        .transform.rotation = Quaternion.Euler(0, yaw, 0);
+                }
+                pos = (a + b) / 2;
+                pitch = Mathf.Atan2(b.y - a.y, L) * Mathf.Rad2Deg;
+                w = L;
+                _bridges.Add(new BridgeInfo { a = a, b = b, yaw = yaw, width = d });
+            }
+            else if (NevishkBuildings.IsGroundFeature(type))
+            {
+                pos = OnGround(new[] { u, v }, -0.1f);
+            }
+            else
+            {
+                MoveToDry(ref u, ref v, w, d);
+                float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
+                float c0 = Ground(u - du, v - dv), c1 = Ground(u + du, v - dv), c2 = Ground(u - du, v + dv), c3 = Ground(u + du, v + dv), cc = Ground(u, v);
+                // With a foundation: stand on the highest point (the foundation fills below). Ruins: settle into the slope.
+                float g = NevishkBuildings.NeedsFoundation(type)
+                    ? Mathf.Max(Mathf.Max(c0, c1), Mathf.Max(Mathf.Max(c2, c3), cc)) + 0.05f
+                    : Mathf.Min(Mathf.Min(c0, c1), Mathf.Min(Mathf.Min(c2, c3), cc)) - 0.4f;
+                pos = UvToWorld(new[] { u, v }, g);
+            }
+            var built = NevishkBuildings.Build(type, root, pos, w, d, yaw, MatFor, seed);
+            if (pitch != 0f) built.root.transform.rotation = Quaternion.Euler(0, yaw, 0) * Quaternion.Euler(0, 0, pitch);
+            Register(landmarkId, u, v, pos, built, Mathf.Max(w, d) * 0.5f * _db.city.mapPixelSize[0] / mapWidth, label);
+        }
+
+        void Register(string landmarkId, float u, float v, Vector3 pos, NevishkBuildings.Result built, float rPx, string label)
+        {
+            var spot = new ModelSpot { u = u, v = v, rPx = rPx, pos = pos, top = built.height, radius = built.radius, label = label };
+            _models.Add(spot);
+            if (!string.IsNullOrEmpty(landmarkId)) _modelByLandmark[landmarkId] = spot;
+        }
+
+        /// Height for a bridge end: the ground there, or above the water if the end is still over it.
+        float DeckEnd(Vector3 p)
+        {
+            if (_terrain == null) return 4f;
+            float wl = _terrain.WaterAtWorld(p), g = _terrain.HeightAtWorld(p);
+            return float.IsNaN(wl) ? g + 0.3f : Mathf.Max(g, wl + 3f);
+        }
+
+        bool NearestBridge(Vector3 w, float maxDist, out BridgeInfo best, out float bestT)
+        {
+            best = default; bestT = 0f; float bestD = maxDist; bool found = false;
+            foreach (var br in _bridges)
+            {
+                Vector2 A = new Vector2(br.a.x, br.a.z), AB = new Vector2(br.b.x - br.a.x, br.b.z - br.a.z);
+                float t = Mathf.Clamp01(Vector2.Dot(new Vector2(w.x, w.z) - A, AB) / AB.sqrMagnitude);
+                float dd = Vector2.Distance(new Vector2(w.x, w.z), A + AB * t);
+                if (dd < bestD) { bestD = dd; best = br; bestT = t; found = true; }
+            }
+            return found;
+        }
+
+        /// A footprint is buildable if none of it is water and it isn't down at river level.
+        bool FootprintDry(float u, float v, float w, float d)
+        {
+            float du = w * 0.5f / mapWidth, dv = d * 0.5f / _mapDepth;
+            for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                float uu = u + i * du, vv = v + j * dv;
+                if (IsWater(uu, vv) || Ground(uu, vv) < 0.6f) return false;
+            }
+            return true;
+        }
+
+        /// If the footprint touches water, move it to the nearest dry spot (up to 90 m away).
+        void MoveToDry(ref float u, ref float v, float w, float d)
+        {
+            if (_terrain == null || FootprintDry(u, v, w, d)) return;
+            for (float r = 6f; r <= 90f; r += 6f)
+                for (int k = 0; k < 16; k++)
+                {
+                    float a = k * Mathf.PI / 8f;
+                    float uu = u + Mathf.Cos(a) * r / mapWidth, vv = v - Mathf.Sin(a) * r / _mapDepth;
+                    if (FootprintDry(uu, vv, w, d)) { u = uu; v = vv; return; }
+                }
+        }
+
+        // ------------------------------------------------------------------ stone paths (Аллея Бужорилор, Аллея «Память»)
+
+        readonly List<(string kind, List<Vector3> pts)> _paths = new List<(string, List<Vector3>)>();
+
+        void LoadPaths()
+        {
+            var asset = Resources.Load<TextAsset>("nevishk_landscape");
+            if (asset == null) return;
+            var root = MiniJson.Parse(asset.text) as Dictionary<string, object>;
+            if (!root.ContainsKey("paths")) return;
+            foreach (var o in (List<object>)root["paths"])
+            {
+                var pd = (Dictionary<string, object>)o;
+                var pts = new List<Vector3>();
+                foreach (var q in (List<object>)pd["points"]) { var xy = (List<object>)q; pts.Add(new Vector3(F(xy[0]), 0, F(xy[1]))); }
+                _paths.Add(((string)pd["kind"], pts));
+            }
+        }
+
+        bool NearPath(Vector3 w, float dist)
+        {
+            float d2 = dist * dist;
+            foreach (var (_, pts) in _paths)
+                foreach (var p in pts)
+                    if ((p.x - w.x) * (p.x - w.x) + (p.z - w.z) * (p.z - w.z) < d2) return true;
+            return false;
+        }
+
+        void BuildPaths()
+        {
+            if (_paths.Count == 0 || _terrain == null) return;
+            var root = new GameObject("Paths").transform;
+            root.SetParent(_root, false);
+            Mesh cube = NevishkBuildings.CubeMesh, cyl = NevishkBuildings.CylinderMesh;
+            var stone = new List<Vector3>(); var stoneTris = new List<int>();
+            var posts = new List<CombineInstance>(); var heads = new List<CombineInstance>();
+            var benches = new List<CombineInstance>(); var arches = new List<CombineInstance>();
+            foreach (var (kind, pts) in _paths)
+            {
+                bool memory = kind == "memory";
+                float half = memory ? 1.5f : 1.7f, along = 0f;
+                int lampIndex = 0;
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    Vector3 prev = pts[Mathf.Max(i - 1, 0)], next = pts[Mathf.Min(i + 1, pts.Count - 1)];
+                    Vector3 t = next - prev; t.y = 0; t.Normalize();
+                    Vector3 right = Vector3.Cross(Vector3.up, t);
+                    Vector3 c = pts[i]; c.y = _terrain.HeightAtWorld(c) + 0.15f;
+                    stone.Add(c - right * half); stone.Add(c + right * half);
+                    if (i > 0)
+                    {
+                        int k = stone.Count - 4;   // left/right of previous, then of this point
+                        stoneTris.Add(k); stoneTris.Add(k + 2); stoneTris.Add(k + 3);
+                        stoneTris.Add(k); stoneTris.Add(k + 3); stoneTris.Add(k + 1);
+                        along += Vector3.Distance(new Vector3(pts[i - 1].x, 0, pts[i - 1].z), new Vector3(c.x, 0, c.z));
+                    }
+                    // Lamps every ~12 m, alternating sides; benches every ~30 m; arches every ~24 m on «Память».
+                    if (along >= lampIndex * 12f)
+                    {
+                        float side = lampIndex % 2 == 0 ? 1f : -1f;
+                        Vector3 lp = c + right * side * (half + 0.9f);
+                        lp.y = _terrain.HeightAtWorld(lp);
+                        posts.Add(new CombineInstance { mesh = cyl, transform = Matrix4x4.TRS(lp + Vector3.up * 2.2f, Quaternion.identity, new Vector3(0.22f, 2.2f, 0.22f)) });
+                        heads.Add(new CombineInstance { mesh = cube, transform = Matrix4x4.TRS(lp + Vector3.up * 4.6f, Quaternion.identity, new Vector3(0.6f, 0.45f, 0.6f)) });
+                        if (lampIndex % 5 == 2)
+                        {
+                            Vector3 bp = c - right * side * (half + 1.1f); bp.y = _terrain.HeightAtWorld(bp);
+                            benches.Add(new CombineInstance { mesh = cube, transform = Matrix4x4.TRS(bp + Vector3.up * 0.35f, Quaternion.LookRotation(t), new Vector3(0.6f, 0.5f, 2.2f)) });
+                        }
+                        if (memory && lampIndex % 2 == 1)
+                        {
+                            var rot = Quaternion.LookRotation(t);
+                            Vector3 l = c - right * (half + 0.4f), r = c + right * (half + 0.4f);
+                            l.y = _terrain.HeightAtWorld(l); r.y = _terrain.HeightAtWorld(r);
+                            arches.Add(new CombineInstance { mesh = cube, transform = Matrix4x4.TRS(l + Vector3.up * 2.75f, rot, new Vector3(0.35f, 5.5f, 0.35f)) });
+                            arches.Add(new CombineInstance { mesh = cube, transform = Matrix4x4.TRS(r + Vector3.up * 2.75f, rot, new Vector3(0.35f, 5.5f, 0.35f)) });
+                            arches.Add(new CombineInstance { mesh = cube, transform = Matrix4x4.TRS((l + r) / 2 + Vector3.up * 5.4f, rot, new Vector3((half + 0.4f) * 2 + 0.4f, 0.3f, 0.35f)) });
+                        }
+                        lampIndex++;
+                    }
+                }
+            }
+            var mesh = new Mesh { name = "Stone paths", indexFormat = IndexFormat.UInt32 };
+            mesh.SetVertices(stone); mesh.SetTriangles(stoneTris, 0); mesh.RecalculateNormals(); mesh.RecalculateBounds();
+            AddMesh(root, "Stone paths", mesh, MatFor(new Color(0.62f, 0.60f, 0.55f), 0.08f));
+            AddCombined("Path lamp posts", posts, new Color(0.18f, 0.17f, 0.16f));
+            AddCombined("Path lamps", heads, new Color(1.0f, 0.84f, 0.55f));
+            AddCombined("Benches", benches, new Color(0.33f, 0.25f, 0.18f));
+            AddCombined("Arches", arches, new Color(0.45f, 0.25f, 0.15f));
         }
 
         /// Finds how a bridge at this spot should run: tries directions through the point and picks the one
@@ -560,6 +730,9 @@ namespace Nevishk
                     float du = w * 0.6f / mapWidth, dv = d * 0.6f / _mapDepth;
                     float g0 = Mathf.Min(Mathf.Min(Ground(u - du, v - dv), Ground(u + du, v - dv)),
                                          Mathf.Min(Ground(u - du, v + dv), Ground(u + du, v + dv))) - 0.5f;
+                    // Never on the water or the river bank, never on a path.
+                    if (IsWater(u, v) || IsWater(u - du, v - dv) || IsWater(u + du, v - dv) || IsWater(u - du, v + dv) || IsWater(u + du, v + dv)
+                        || g0 < 0.4f || NearPath(UvToWorld(new[] { u, v }), Mathf.Max(w, d) * 0.6f + 2f)) continue;
                     float g1 = Mathf.Max(Ground(u, v), g0);
                     float top = g1 + h;
                     Vector3 p = UvToWorld(new[] { u, v }, (g0 + top) / 2f);
@@ -579,7 +752,8 @@ namespace Nevishk
             {
                 var r = (List<object>)o;
                 float s = F(r[2]), tu = F(r[0]), tv = F(r[1]);
-                if (IsWater(tu, tv) || NearModel(tu, tv, 2f) || NearRail(UvToWorld(new[] { tu, tv }), NevishkRailroad.BedHalfWidth + 4f)) continue;
+                if (IsWater(tu, tv) || NearModel(tu, tv, 2f) || NearRail(UvToWorld(new[] { tu, tv }), NevishkRailroad.BedHalfWidth + 4f)
+                    || NearPath(UvToWorld(new[] { tu, tv }), 3.5f)) continue;
                 Vector3 p = UvToWorld(new[] { tu, tv }, Ground(tu, tv) - 0.5f);
                 trees.Add(new CombineInstance
                 {

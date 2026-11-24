@@ -78,8 +78,14 @@ namespace Nevishk
                 "bar"        => Bar(kit, w, d),
                 "park"       => Park(kit, w, d),
                 "statue"     => Statue(kit, w, d),
+                "checkpoint_bridge" => CheckpointOnBridge(kit, w, d),
+                "arch"       => Arch(kit, w, d),
                 _          => kit.Box(Vector3.zero, new Vector3(w, 8, d), Concrete),
             };
+            // Buildings stand on the highest ground under them; a foundation fills the slope below,
+            // so nothing floats and nothing is half-buried.
+            if (NeedsFoundation(type))
+                kit.Box(new Vector3(0, -14f, 0), new Vector3(w * 0.96f, 14f, d * 0.96f), FoundationStone);
             return new Result { root = root.gameObject, height = h, radius = Mathf.Max(w, d) * 0.6f };
         }
 
@@ -249,6 +255,18 @@ namespace Nevishk
             return 22f;
         }
 
+        static readonly Color FoundationStone = new Color(0.46f, 0.44f, 0.40f);
+        public static bool NeedsFoundation(string type) => type switch
+        {
+            "bridge" => false, "checkpoint_bridge" => false, "street" => false, "alley" => false, "arch" => false,
+            "embankment" => false, "park" => false, "cave" => false, "tunnel" => false, "firepit" => false,
+            "spillway" => false, "slabs" => false, "ruin" => false, "shed" => false,
+            _ => true,
+        };
+
+        /// Types that are placed on the ground as-is (paths, natural features) rather than moved to dry, level ground.
+        public static bool IsGroundFeature(string type) => type is "street" or "alley" or "arch" or "embankment" or "park" or "cave" or "firepit";
+
         // ------------------------------------------------------------------ which structure for which place
 
         /// Picks a structure for a lore landmark from its name (Russian, as on the board).
@@ -261,7 +279,7 @@ namespace Nevishk
             if (Has("кпп")) return ("checkpoint", 18, 8);
             if (Has("мост")) return ("bridge", 60, 9);
             if (Has("фонтан")) return ("fountain", 12, 12);
-            if (Has("аллея «память»", "аллея \"память\"")) return ("alley", 46, 8);
+            if (Has("аллея «память»", "аллея \"память\"", "бужорилор")) return ("arch", 8, 3);   // the paths themselves come from the terrain data
             if (Has("бульвар", "улица", "туманная", "светлый двор", "аллея")) return ("street", 56, 10);
             if (Has("кострище")) return ("firepit", 8, 8);
             if (Has("пещера")) return ("cave", 18, 14);
@@ -303,6 +321,29 @@ namespace Nevishk
         static readonly Color Leaf    = new Color(0.22f, 0.34f, 0.22f);
         static readonly Color Bronze  = new Color(0.45f, 0.34f, 0.20f);
         static readonly Color RedWhite = new Color(0.75f, 0.20f, 0.18f);
+
+        /// Checkpoint standing on a bridge deck: booth at the kerb, barrier across the roadway (local x = across the deck).
+        static float CheckpointOnBridge(Kit k, float w, float d)
+        {
+            float half = w / 2f;
+            k.Box(new Vector3(-half + 2f, 0, 0), new Vector3(2.8f, 3f, 3.2f), Whitewash);
+            k.Box(new Vector3(-half + 2f, 3f, 0), new Vector3(3.4f, 0.35f, 3.8f), RoofDark);
+            k.Box(new Vector3(-half + 3.8f, 0, -1.8f), new Vector3(0.4f, 1.3f, 0.4f), DarkConc);
+            k.Box(new Vector3(0.5f, 1.1f, -1.8f), new Vector3(w - 6f, 0.22f, 0.22f), RedWhite);   // barrier arm across the road
+            k.Box(new Vector3(half - 1.2f, 0, -1.8f), new Vector3(0.4f, 1.3f, 0.4f), DarkConc);
+            return 3.4f;
+        }
+
+        /// Old rusty arch over a path (Аллея «Память»: «По краям аллеи стояли старые арки»).
+        static float Arch(Kit k, float w, float d)
+        {
+            foreach (float s in new[] { -1f, 1f })
+                k.Box(new Vector3(s * w / 2, 0, 0), new Vector3(0.45f, 5.5f, 0.45f), Rust);
+            k.Box(new Vector3(0, 5.3f, 0), new Vector3(w + 0.6f, 0.4f, 0.45f), Rust);
+            k.Box(new Vector3(0, 4.4f, 0), new Vector3(w * 0.6f, 0.25f, 0.3f), Rust);
+            return 6f;
+        }
+        static readonly Color Rust = new Color(0.45f, 0.25f, 0.15f);
 
         static float Checkpoint(Kit k, float w, float d)
         {
@@ -686,6 +727,7 @@ namespace Nevishk
         static Mesh _cube, _cyl, _prism, _cone;
         /// Shared meshes for other builders (countryside villages, woods).
         public static Mesh CubeMesh => UnitCube;
+        public static Mesh CylinderMesh => UnitCylinder;
         public static Mesh GableMesh => PrismMesh;
         public static Mesh SpireMesh => ConeMesh;
         static Mesh UnitCube => _cube != null ? _cube : (_cube = Primitive(PrimitiveType.Cube));
