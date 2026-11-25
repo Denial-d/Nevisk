@@ -850,7 +850,7 @@ namespace Nevishk
             _roads = new NevishkRoads(_terrain);
             _roads.Plan(districts, exits, bridges, Blocked, w => NearRail(w, NevishkRailroad.BedHalfWidth + 4f));
             var asphalt = new Material(MatFor(new Color(0.20f, 0.20f, 0.21f))); asphalt.SetFloat("_Smoothness", 0.35f);   // damp
-            _roads.Build(_root, asphalt, MatFor(new Color(0.78f, 0.76f, 0.66f)));
+            _roads.Build(_root, asphalt, MatFor(new Color(0.78f, 0.76f, 0.66f)), MatFor(new Color(0.27f, 0.36f, 0.21f)));
         }
 
         bool NearRoad(Vector3 w, float margin) => _roads != null && _roads.Near(w, margin);
@@ -890,6 +890,7 @@ namespace Nevishk
                 }
             }
             fill.Finish(_root, c => MatFor(c));
+            _fillFootprints = fill.Footprints;
 
             // Trees: low-poly cones, merged into one mesh.
             Mesh cone = ConeMesh(7);
@@ -909,6 +910,96 @@ namespace Nevishk
                 });
             }
             AddCombined("Trees", trees, new Color(0.22f, 0.40f, 0.24f));
+            BuildGreenery();
+        }
+
+        List<(Vector2 c, float r)> _fillFootprints;
+
+        /// Невишк is green like Кишинёв: trees line every key road and fill the yards between the buildings.
+        void BuildGreenery()
+        {
+            if (_terrain == null) return;
+            var green = new NevishkGreenery();
+            var rect = _terrain.WorldRect;
+
+            // Building footprints in a coarse grid, for quick "is this spot inside a building?" checks.
+            const float cell = 16f;
+            var grid = new Dictionary<long, List<(Vector2 c, float r)>>();
+            long Key(int i, int j) => ((long)i << 32) ^ (uint)j;
+            foreach (var f in _fillFootprints ?? new List<(Vector2, float)>())
+            {
+                int ci = Mathf.FloorToInt(f.c.x / cell), cj = Mathf.FloorToInt(f.c.y / cell);
+                if (!grid.TryGetValue(Key(ci, cj), out var list)) grid[Key(ci, cj)] = list = new List<(Vector2, float)>();
+                list.Add(f);
+            }
+            bool InBuilding(Vector3 w, float clear)
+            {
+                int ci = Mathf.FloorToInt(w.x / cell), cj = Mathf.FloorToInt(w.z / cell);
+                for (int dj = -2; dj <= 2; dj++)
+                for (int di = -2; di <= 2; di++)
+                    if (grid.TryGetValue(Key(ci + di, cj + dj), out var list))
+                        foreach (var f in list)
+                            if ((f.c - new Vector2(w.x, w.z)).magnitude < f.r + clear) return true;
+                return false;
+            }
+            bool Free(Vector3 w, float crown, bool street)
+            {
+                if (!rect.Contains(new Vector2(w.x, w.z))) return false;
+                float u = w.x / mapWidth + 0.5f, v = 0.5f - w.z / _mapDepth;
+                float du = crown / mapWidth, dv = crown / _mapDepth;
+                if (IsWater(u, v) || IsWater(u + du, v) || IsWater(u - du, v) || IsWater(u, v + dv) || IsWater(u, v - dv)) return false;
+                if (Ground(u, v) < 0.4f) return false;
+                if (_roads != null && _roads.DistanceTo(w) < NevishkRoads.HalfWidth + (street ? 1.6f : crown + 1.5f)) return false;
+                if (NearModel(u, v, crown + 2f) || NearRail(w, NevishkRailroad.BedHalfWidth + crown + 1f) || NearPath(w, crown + 1f)
+                    || NearBridge(w, crown + 3f) || InPrimeCity(w, crown)) return false;
+                return !InBuilding(w, crown * 0.8f + 1f);
+            }
+            Vector3 OnLand(Vector3 w) { w.y = _terrain.HeightAtWorld(w); return w; }
+
+            var rng = new System.Random(2027);
+            float R() => (float)rng.NextDouble();
+
+            // 1. Street trees: both sides of every key road, every ~11 m, in the verge.
+            if (_roads != null)
+                foreach (var road in _roads.Roads)
+                {
+                    float along = 0f, next = R() * 6f;
+                    for (int q = 1; q < road.Count; q++)
+                    {
+                        Vector3 a = road[q - 1], b = road[q];
+                        float seg = Vector3.Distance(new Vector3(a.x, 0, a.z), new Vector3(b.x, 0, b.z));
+                        Vector3 dir = new Vector3(b.x - a.x, 0, b.z - a.z).normalized;
+                        Vector3 right = Vector3.Cross(Vector3.up, dir);
+                        while (next <= along + seg)
+                        {
+                            var c = Vector3.Lerp(a, b, (next - along) / Mathf.Max(seg, 0.01f));
+                            foreach (float side in new[] { -1f, 1f })
+                            {
+                                var w = c + right * side * (NevishkRoads.HalfWidth + NevishkRoads.VergeWidth * 0.55f) + dir * (R() - 0.5f);
+                                float size = 0.85f + R() * 0.3f;
+                                if (Free(w, 2.6f * size, true) && green.Room(w, 6f)) green.Tree(OnLand(w), size, rng.Next());
+                            }
+                            next += 10f + R() * 2.5f;
+                        }
+                        along += seg;
+                    }
+                }
+
+            // 2. Yards: a few trees round every building, more round the panel blocks.
+            foreach (var f in _fillFootprints ?? new List<(Vector2, float)>())
+            {
+                int tries = f.r > 5f ? 5 : 3;
+                for (int k = 0; k < tries; k++)
+                {
+                    float ang = R() * Mathf.PI * 2f, dist = f.r + 3.5f + R() * 7f;
+                    var w = new Vector3(f.c.x + Mathf.Cos(ang) * dist, 0f, f.c.y + Mathf.Sin(ang) * dist);
+                    float size = 0.75f + R() * 0.55f;
+                    if (Free(w, 2.6f * size, false) && green.Room(w, 5f)) green.Tree(OnLand(w), size, rng.Next());
+                }
+            }
+
+            green.Finish(_root, c => MatFor(c));
+            Debug.Log($"[Nevishk] Greenery: {green.Count} trees.");
         }
 
         void BuildSpecialLandmarks()

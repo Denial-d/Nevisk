@@ -52,6 +52,8 @@ namespace Nevishk
         }
         readonly Dictionary<string, Builder> _builders = new Dictionary<string, Builder>();
         readonly Dictionary<Color, List<CombineInstance>> _roofs = new Dictionary<Color, List<CombineInstance>>();
+        /// Where each building stands (centre XZ, radius), so trees and lawns can keep clear.
+        public readonly List<(Vector2 c, float r)> Footprints = new List<(Vector2, float)>();
 
         Builder For(string key, Texture2D tex, Color tint)
         {
@@ -77,6 +79,8 @@ namespace Nevishk
         public void Add(string district, Kind kind, Vector3 c, float ground, float w, float d, float h, float yaw, int seed)
         {
             var rot = Quaternion.Euler(0f, yaw, 0f);
+            float reach = kind == Kind.Garages ? Mathf.Max(w, d) * 0.55f + 1f : 0.5f * Mathf.Sqrt(w * w + d * d);
+            Footprints.Add((new Vector2(c.x, c.z), reach));
             var pal = Palettes.TryGetValue(district ?? "", out var p) ? p : new[] { NevishkTheme.Concrete };
             Color tint = pal[(seed / 3) % pal.Length];
             switch (kind)

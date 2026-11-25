@@ -235,6 +235,46 @@ namespace Nevishk
             Roads.Add(res);
         }
 
+        Dictionary<long, List<(Vector2 a, Vector2 b)>> _segGrid;
+        const float SegCell = 20f;
+
+        /// Exact distance (XZ) from w to the nearest road centreline; +inf if there are no roads near.
+        public float DistanceTo(Vector3 w)
+        {
+            if (_segGrid == null)
+            {
+                _segGrid = new Dictionary<long, List<(Vector2, Vector2)>>();
+                foreach (var road in Roads)
+                    for (int q = 0; q + 1 < road.Count; q++)
+                    {
+                        Vector2 a = new Vector2(road[q].x, road[q].z), b = new Vector2(road[q + 1].x, road[q + 1].z);
+                        int i0 = Mathf.FloorToInt(Mathf.Min(a.x, b.x) / SegCell), i1 = Mathf.FloorToInt(Mathf.Max(a.x, b.x) / SegCell);
+                        int j0 = Mathf.FloorToInt(Mathf.Min(a.y, b.y) / SegCell), j1 = Mathf.FloorToInt(Mathf.Max(a.y, b.y) / SegCell);
+                        for (int j = j0; j <= j1; j++)
+                        for (int i = i0; i <= i1; i++)
+                        {
+                            long key = ((long)i << 32) ^ (uint)j;
+                            if (!_segGrid.TryGetValue(key, out var list)) _segGrid[key] = list = new List<(Vector2, Vector2)>();
+                            list.Add((a, b));
+                        }
+                    }
+            }
+            Vector2 p = new Vector2(w.x, w.z);
+            int ci = Mathf.FloorToInt(p.x / SegCell), cj = Mathf.FloorToInt(p.y / SegCell);
+            float best = float.PositiveInfinity;
+            for (int dj = -1; dj <= 1; dj++)
+            for (int di = -1; di <= 1; di++)
+            {
+                if (!_segGrid.TryGetValue(((long)(ci + di) << 32) ^ (uint)(cj + dj), out var list)) continue;
+                foreach (var (a, b) in list)
+                {
+                    Vector2 ab = b - a; float tt = ab.sqrMagnitude < 1e-4f ? 0f : Mathf.Clamp01(Vector2.Dot(p - a, ab) / ab.sqrMagnitude);
+                    best = Mathf.Min(best, Vector2.Distance(p, a + ab * tt));
+                }
+            }
+            return best;
+        }
+
         /// Distance (XZ) from w to the nearest road, capped at `cap`.
         public bool Near(Vector3 w, float margin)
         {
@@ -256,15 +296,18 @@ namespace Nevishk
 
         /// Asphalt ribbons draped over the ground (each edge sampled separately); skipped over water, where the
         /// bridge decks carry the road.
-        public void Build(Transform parent, Material asphalt, Material line)
+        public const float VergeWidth = 2.4f;
+
+        public void Build(Transform parent, Material asphalt, Material line, Material verge)
         {
             var root = new GameObject("Roads").transform;
             root.SetParent(parent, false);
             var v = new List<Vector3>(); var t = new List<int>();
             var lv = new List<Vector3>(); var lt = new List<int>();
+            var gv = new List<Vector3>(); var gt = new List<int>();
             foreach (var road in Roads)
             {
-                int prevL = -1, prevLine = -1; float along = 0f;
+                int prevL = -1, prevLine = -1, prevG = -1; float along = 0f;
                 for (int q = 0; q < road.Count; q++)
                 {
                     Vector3 a = road[Mathf.Max(q - 1, 0)], b = road[Mathf.Min(q + 1, road.Count - 1)];
@@ -273,7 +316,7 @@ namespace Nevishk
                     Vector3 c = road[q];
                     if (q > 0) along += Vector3.Distance(road[q - 1], c);
                     bool wet = !float.IsNaN(_t.WaterAtWorld(c));
-                    if (wet) { prevL = -1; prevLine = -1; continue; }
+                    if (wet) { prevL = -1; prevLine = -1; prevG = -1; continue; }
                     Vector3 l = c - right * HalfWidth, r = c + right * HalfWidth;
                     l.y = _t.HeightAtWorld(l) + 0.22f; r.y = _t.HeightAtWorld(r) + 0.22f;
                     float cy = Mathf.Max(_t.HeightAtWorld(c) + 0.22f, (l.y + r.y) * 0.5f);
@@ -285,6 +328,18 @@ namespace Nevishk
                         t.Add(prevL); t.Add(k + 1); t.Add(prevL + 1);
                     }
                     prevL = k;
+
+                    // Grass verges either side (just below the asphalt, so crossings stay grey).
+                    Vector3 ol = c - right * (HalfWidth + VergeWidth), or = c + right * (HalfWidth + VergeWidth);
+                    ol.y = _t.HeightAtWorld(ol) + 0.16f; or.y = _t.HeightAtWorld(or) + 0.16f;
+                    Vector3 il = l + Vector3.down * 0.05f, ir = r + Vector3.down * 0.05f;
+                    int g = gv.Count; gv.Add(ol); gv.Add(il); gv.Add(ir); gv.Add(or);
+                    if (prevG >= 0)
+                    {
+                        gt.Add(prevG); gt.Add(g); gt.Add(g + 1); gt.Add(prevG); gt.Add(g + 1); gt.Add(prevG + 1);
+                        gt.Add(prevG + 2); gt.Add(g + 2); gt.Add(g + 3); gt.Add(prevG + 2); gt.Add(g + 3); gt.Add(prevG + 3);
+                    }
+                    prevG = g;
 
                     // Dashed centre line: 3 m dash, 4 m gap.
                     bool dash = (along % 7f) < 3f;
@@ -299,6 +354,7 @@ namespace Nevishk
                 }
             }
             AddMesh(root, "Asphalt", v, t, asphalt);
+            if (verge != null) AddMesh(root, "Verges", gv, gt, verge);
             AddMesh(root, "Road markings", lv, lt, line);
         }
 
