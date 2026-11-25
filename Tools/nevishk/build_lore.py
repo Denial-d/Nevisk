@@ -333,6 +333,25 @@ LANDMARK_IMAGES = {
 for l in landmarks:
     l['images'] = [dict(file=f, caption=c) for f, c in LANDMARK_IMAGES.get(l['name'], [])]
 
+# ---------- hand-written district lore (Tools/nevishk/lore_*.json) ----------
+# Districts the board has no text for, written directly: district fields are replaced, places appended.
+import glob as _glob, os as _os
+def merge_extra(districts, landmarks, folder):
+    for f in sorted(_glob.glob(_os.path.join(folder, 'lore_*.json'))):
+        extra = json.load(open(f, encoding='utf-8'))
+        dx = extra.get('district')
+        if dx:
+            for d in districts:
+                if d['id'] == dx['id']:
+                    d.update({k: v for k, v in dx.items() if k != 'id'})
+        ids = {l['id'] for l in landmarks}
+        for l in extra.get('landmarks', []):
+            if l['id'] in ids: continue
+            l = dict(l); l.setdefault('district', dx['id'] if dx else None)
+            l.setdefault('docs', []); l.setdefault('images', [])
+            landmarks.append(l)
+merge_extra(districts, landmarks, _os.path.dirname(_os.path.abspath(__file__)))
+
 data = dict(
     city=dict(name='Невишк', tagline='Невишк — столица республики Тамаш', mapImage='nevishk_basemap',
               mapPixelSize=[IMG_W, IMG_H]),

@@ -509,7 +509,9 @@ namespace Nevishk
                 foreach (var l in _db.landmarks)
                 {
                     if (_modelByLandmark.ContainsKey(l.id)) continue;
-                    var spec0 = NevishkBuildings.ForLandmark(l.name);
+                    var spec0 = !string.IsNullOrEmpty(l.model)
+                        ? (l.model, l.size != null && l.size.Length == 2 ? l.size[0] : 24f, l.size != null && l.size.Length == 2 ? l.size[1] : 16f)
+                        : NevishkBuildings.ForLandmark(l.name);
                     if (spec0 == null || (spec0.Value.type == "bridge") != bridges) continue;
                     BuildForLandmark(root, l, spec0.Value, ref seed);
                 }

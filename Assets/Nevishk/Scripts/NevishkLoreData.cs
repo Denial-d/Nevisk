@@ -37,6 +37,19 @@ namespace Nevishk
         public string[] docs;
         public float[] uv;      // 0..1 on the base map image, origin top-left
         public ImageInfo[] images;
+        public string kicker;   // overrides "РАЙОН N" (e.g. a district whose official language isn't Russian)
+        public LoreTranslation ru;
+    }
+
+    /// <summary>
+    /// A Russian version of an entry whose official text is in another language (Loom of Echoes: Ouroboros
+    /// banned Russian). The panel offers it behind a switch, with an in-world warning.
+    /// </summary>
+    [Serializable]
+    public class LoreTranslation
+    {
+        public string name, summary, text;
+        public static bool Has(LoreTranslation t) => t != null && !string.IsNullOrEmpty(t.text);
     }
 
     [Serializable]
@@ -57,6 +70,9 @@ namespace Nevishk
         public string text;
         public string[] docs;
         public ImageInfo[] images;
+        public string model;     // building type, overriding the guess from the name (NevishkBuildings types)
+        public float[] size;     // its footprint in base-map px (w, d)
+        public LoreTranslation ru;
     }
 
     [Serializable]

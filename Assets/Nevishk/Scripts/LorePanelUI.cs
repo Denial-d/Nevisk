@@ -139,12 +139,60 @@ namespace Nevishk
             _panel.gameObject.SetActive(true);
             ClearContent();
             _kicker.color = T.Accent;
+            _langBtn.gameObject.SetActive(false);   // the renderers switch it on when the entry has a translation
             _current.render();
             _backBtn.gameObject.SetActive(_history.Count > 0);
             Canvas.ForceUpdateCanvases();
             _scroll.verticalNormalizedPosition = 1f;
             EntryShown?.Invoke(_current.id, isBack);
         }
+
+        // ---- the official-language switch (Loom of Echoes)
+        RectTransform _langBtn;
+        TextMeshProUGUI _langLabel;
+        bool _readRussian;
+
+        /// Shows the switch for this entry and says whether to render its Russian version.
+        bool ShowRussian(LoreTranslation t)
+        {
+            bool has = LoreTranslation.Has(t);
+            _langBtn.gameObject.SetActive(has);
+            _langLabel.text = _readRussian ? "Read in English" : "Читать на русском";
+            var r = _langBtn; r.sizeDelta = new Vector2(_langLabel.GetPreferredValues().x + 26f, T.TouchTarget);
+            return has && _readRussian;
+        }
+
+        void ToggleLanguage()
+        {
+            _readRussian = !_readRussian;
+            Render(true);   // same entry, no history step
+        }
+
+        /// The in-world warning above the Russian text: the translation is accurate, the world says it isn't.
+        void AddBannedTranslationNote()
+        {
+            var t = AddText(
+                $"<font-weight=700><size=80%><cspace=0.15em>НЕОФИЦИАЛЬНЫЙ ПЕРЕВОД</cspace></size></font-weight>\n" +
+                "<i>Текст может быть неточным: официальный перевод на русский язык запрещён. " +
+                "Перевод выполнен экстремистами, отказывающимися признать закон.</i>",
+                NevishkFonts.Reading, T.SizeBody - 3, T.Stamp);
+            t.margin = new Vector4(14, T.S1, 0, T.S2);
+            // A thin red rule down the left side, like an archive stamp.
+            var rule = NewRect("Rule", t.transform);
+            rule.anchorMin = new Vector2(0, 0); rule.anchorMax = new Vector2(0, 1); rule.pivot = new Vector2(0, 0.5f);
+            rule.sizeDelta = new Vector2(3, -T.S1); rule.anchoredPosition = new Vector2(0, -T.S1 * 0.25f);
+            var img = rule.gameObject.AddComponent<Image>(); img.color = T.Stamp; img.raycastTarget = false;
+        }
+
+        static string EnglishCategory(string category) => category switch
+        {
+            "production" => "PRODUCTION",
+            "infrastructure" => "INFRASTRUCTURE",
+            "culture" => "CULTURE",
+            "education" => "EDUCATION",
+            "gathering" => "GATHERING PLACE",
+            _ => "PLACE",
+        };
 
         void Animate(bool open)
         {
@@ -181,16 +229,20 @@ namespace Nevishk
             var d = _db.District(id);
             if (d == null) return;
             SetActiveDistrict(id);
-            _kicker.text = $"РАЙОН {d.number}";
-            _title.text = d.name;
+            bool ru = ShowRussian(d.ru);
+            _kicker.text = ru || string.IsNullOrEmpty(d.kicker) ? $"РАЙОН {d.number}" : d.kicker;
+            _title.text = ru && !string.IsNullOrEmpty(d.ru.name) ? d.ru.name : d.name;
+            string summary = ru && !string.IsNullOrEmpty(d.ru.summary) ? d.ru.summary : d.summary;
             var meta = new List<string>();
-            if (!string.IsNullOrEmpty(d.summary)) meta.Add($"<i>{d.summary}</i>");
+            if (!string.IsNullOrEmpty(summary)) meta.Add($"<i>{summary}</i>");
             if (!string.IsNullOrEmpty(d.owner)) meta.Add("ведёт " + d.owner);
             if (!string.IsNullOrEmpty(d.status)) meta.Add(StatusRu(d.status));
             _meta.text = string.Join("   ·   ", meta);
 
             AddLeadPhoto(d.images);
-            if (!string.IsNullOrEmpty(d.text)) AddBody(d.text);
+            if (ru) AddBannedTranslationNote();
+            string body = ru ? d.ru.text : d.text;
+            if (!string.IsNullOrEmpty(body)) AddBody(body);
             else AddNote("Лор района ещё пишется.");
             AddMorePhotos(d.images);
 
@@ -210,7 +262,7 @@ namespace Nevishk
                 {
                     var cat = _db.Category(l.category);
                     var lid = l.id;
-                    AddRow(l.name, (cat != null ? cat.name : "") + (string.IsNullOrEmpty(l.text) ? "" : "  ·  есть лор"),
+                    AddRow(ru && LoreTranslation.Has(l.ru) && !string.IsNullOrEmpty(l.ru.name) ? l.ru.name : l.name, (cat != null ? cat.name : "") + (string.IsNullOrEmpty(l.text) ? "" : "  ·  есть лор"),
                            () => LandmarkClicked?.Invoke(lid), NevishkColors.ForCategory(_db, l.category), !string.IsNullOrEmpty(l.text));
                 }
             }
@@ -223,14 +275,17 @@ namespace Nevishk
             var cat = _db.Category(l.category);
             var dist = _db.District(l.district);
             SetActiveDistrict(dist?.id);
-            _kicker.text = (cat != null ? cat.name : "").ToUpperInvariant();
-            _title.text = l.name;
+            bool ru = ShowRussian(l.ru);
+            _kicker.text = LoreTranslation.Has(l.ru) && !ru ? EnglishCategory(l.category) : (cat != null ? cat.name : "").ToUpperInvariant();
+            _title.text = ru && !string.IsNullOrEmpty(l.ru.name) ? l.ru.name : l.name;
             _meta.text = dist != null
                 ? $"Район {dist.number} · <link=\"d:{dist.id}\"><color={T.ToHex(T.Accent)}><u>{dist.name}</u></color></link>"
                 : "";
 
             AddLeadPhoto(l.images);
-            if (!string.IsNullOrEmpty(l.text)) AddBody(l.text);
+            if (ru) AddBannedTranslationNote();
+            string body = ru ? l.ru.text : l.text;
+            if (!string.IsNullOrEmpty(body)) AddBody(body);
             else AddNote("Описания пока нет.");
             AddMorePhotos(l.images);
 
@@ -277,13 +332,14 @@ namespace Nevishk
 
             var names = new List<Action>();
             foreach (var d in _db.districts)
-                if (d.name.IndexOf(q, cmp) >= 0 || (d.text ?? "").IndexOf(q, cmp) >= 0)
+                if (d.name.IndexOf(q, cmp) >= 0 || (d.text ?? "").IndexOf(q, cmp) >= 0 || (d.ru?.text ?? "").IndexOf(q, cmp) >= 0)
                 {
                     var id = d.id; var nm = d.name; var num = d.number; var col = JsonColor(d.color);
                     names.Add(() => AddRow(nm, $"Район {num}", () => DistrictClicked?.Invoke(id), col, true));
                 }
             foreach (var l in _db.landmarks)
-                if (l.name.IndexOf(q, cmp) >= 0 || (l.text ?? "").IndexOf(q, cmp) >= 0)
+                if (l.name.IndexOf(q, cmp) >= 0 || (l.text ?? "").IndexOf(q, cmp) >= 0
+                    || (l.ru?.name ?? "").IndexOf(q, cmp) >= 0 || (l.ru?.text ?? "").IndexOf(q, cmp) >= 0)
                 {
                     var id = l.id; var nm = l.name; var sub = _db.District(l.district)?.name ?? ""; var col = NevishkColors.ForCategory(_db, l.category);
                     var lore = !string.IsNullOrEmpty(l.text);
@@ -855,6 +911,14 @@ namespace Nevishk
             close.anchorMin = close.anchorMax = close.pivot = new Vector2(1, 1);
             close.anchoredPosition = new Vector2(-T.S2, -T.S2); close.sizeDelta = new Vector2(T.TouchTarget, T.TouchTarget);
             close.GetComponentInChildren<TextMeshProUGUI>().fontSize = 28;
+
+            // Language switch: only shown for entries whose official text isn't Russian.
+            _langBtn = SmallButton(_panel, "Читать на русском", ToggleLanguage);
+            _langBtn.anchorMin = _langBtn.anchorMax = _langBtn.pivot = new Vector2(1, 1);
+            _langBtn.anchoredPosition = new Vector2(-T.S2 - T.TouchTarget - T.S1, -T.S2);
+            _langLabel = _langBtn.GetComponentInChildren<TextMeshProUGUI>();
+            _langLabel.fontSize = 15f;
+            _langBtn.gameObject.SetActive(false);
 
             var back = SmallButton(_panel, "‹  Назад", Back);
             back.anchorMin = back.anchorMax = back.pivot = new Vector2(0, 1);
