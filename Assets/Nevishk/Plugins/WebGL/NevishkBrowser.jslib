@@ -48,6 +48,30 @@ mergeInto(LibraryManager.library, {
     input.click();
   },
 
+  // File picker for a picture: centre-crop to a square, scale to `size` px, send base64 JPEG to gameObject.method.
+  NevishkOpenImage: function (goPtr, methodPtr, size) {
+    var go = UTF8ToString(goPtr), method = UTF8ToString(methodPtr);
+    var input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*";
+    input.onchange = function () {
+      var f = input.files && input.files[0];
+      if (!f) return;
+      var url = URL.createObjectURL(f);
+      var img = new Image();
+      img.onload = function () {
+        var side = Math.min(img.width, img.height);
+        var c = document.createElement("canvas"); c.width = size; c.height = size;
+        c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+        URL.revokeObjectURL(url);
+        var data = c.toDataURL("image/jpeg", 0.88).split(",")[1];
+        if (typeof SendMessage === "function") SendMessage(go, method, data);
+        else if (typeof unityInstance !== "undefined" && unityInstance) unityInstance.SendMessage(go, method, data);
+      };
+      img.src = url;
+    };
+    input.click();
+  },
+
   NevishkCopyLink: function (hashPtr) {
     var hash = UTF8ToString(hashPtr);
     var url = window.location.origin + window.location.pathname + window.location.search + "#" + hash;

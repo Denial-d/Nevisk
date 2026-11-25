@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using TMPro;
@@ -10,35 +11,50 @@ namespace Nevishk
 {
     // ---------------------------------------------------------------- saved data
 
+    /// A story: the cast (items) and a sequence of steps. Each step says where every item stands (items absent
+    /// from a step are off the board in it), which strings are tied, and a caption.
     [Serializable]
     public class StoryScene
     {
-        public int v = 1;
+        public int v = 2;
         public List<StoryItem> items = new List<StoryItem>();
-        public List<StoryLink> links = new List<StoryLink>();
+        public List<StoryStep> steps = new List<StoryStep>();
+        public List<StoryLink> links;   // v1 scenes only (a single step); read and converted on load
     }
 
     [Serializable]
     public class StoryItem
     {
-        public string id, kind, name, note, color;   // kind: figure | object | flag; color: #RRGGBB
-        public float x, z;
+        public string id, kind, shape, name, note, color, portrait;   // kind: figure | object | flag; color #RRGGBB; portrait: base64 JPEG
+        public float x, z;                                           // v1 position; v2 keeps positions per step
     }
 
     [Serializable]
-    public class StoryLink
+    public class StoryStep
     {
-        public string a, b, color;   // ends: story item ids or district / landmark ids
+        public string text = "";
+        public List<StoryPos> pos = new List<StoryPos>();
+        public List<StoryLink> links = new List<StoryLink>();
     }
 
+    [Serializable]
+    public class StoryPos { public string id; public float x, z; }
+
+    [Serializable]
+    public class StoryLink { public string a, b, color; }   // ends: story item ids or district / landmark ids
+
     /// <summary>
-    /// Story mode: people put their own figures, story objects and flags on the map, move them about and tie
-    /// things together with detective-board strings (to each other or to the lore's districts and landmarks).
-    /// The scene autosaves in the browser and can be exported as a file or a link (#story=…) that opens it.
+    /// Story mode: people put their own figures (several shapes, with portraits), story objects and flags on the
+    /// map, tie things together with detective-board strings, and tell it step by step: each step is a
+    /// arrangement with a caption, and the story can be played back with figures gliding between steps.
+    /// Autosaves in the browser; exports as a file or a link (#story=…).
     /// </summary>
     public class StoryMode : MonoBehaviour
     {
         const string PrefsKey = "nevishk_story", BackupKey = "nevishk_story_backup";
+
+        public static readonly (string id, string label)[] Shapes =
+            { ("pawn", "Пешка"), ("meeple", "Человек"), ("queen", "Ферзь"), ("cloak", "Плащ"), ("rook", "Ладья") };
 
         // Set by NevishkMap.
         public Camera cam;
@@ -52,8 +68,12 @@ namespace Nevishk
         public Func<Color, Material> material;
 
         StoryScene _scene = new StoryScene();
+        int _step;
+        StoryStep Step => _scene.steps[_step];
+
         readonly Dictionary<string, Token> _tokens = new Dictionary<string, Token>();
         readonly List<(StoryLink link, LineRenderer line)> _lines = new List<(StoryLink, LineRenderer)>();
+        bool _linesDirty;
         Transform _root;
         Material _lineMat;
 
@@ -63,9 +83,10 @@ namespace Nevishk
         string _threadFrom;
         Vector3 _dragOffset;
         Vector2 _pressPos;
-        bool _pressedOnToken, _dirty;
+        bool _pressedOnToken, _dirty, _playing;
         float _saveAt;
         int _nextId = 1;
+        Coroutine _play;
 
         class Token
         {
@@ -73,10 +94,12 @@ namespace Nevishk
             public GameObject go;
             public Transform body, spin;
             public TextMeshPro label;
-            public SpriteRenderer plate;
+            public SpriteRenderer plate, portrait;
             public Renderer[] tinted;
             public float topLocal;          // anchor height before distance scaling
-            public float scale = 1f;
+            public float scale = 1f, appear;
+            public Vector2 shown;           // where it's drawn (glides toward the step's position)
+            public bool placed;
         }
 
         // ---------------------------------------------------------------- set-up
@@ -98,26 +121,51 @@ namespace Nevishk
             ui.StorySave += SaveFile;
             ui.StoryOpen += OpenFile;
             ui.StoryShare += ShareLink;
-            ui.StoryClear += () => { Backup(); Load(new StoryScene()); MarkDirty(); ui.Notice("Сюжет очищен.", "Вернуть", RestoreBackup); };
+            ui.StoryClear += () => { StopPlay(); Backup(); Load(new StoryScene()); MarkDirty(); ui.Notice("Сюжет очищен.", "Вернуть", RestoreBackup); };
+
             ui.CardNameChanged += v => { if (_selected == null) return; _selected.item.name = v; SetLabel(_selected); MarkDirty(); };
             ui.CardNoteChanged += v => { if (_selected == null) return; _selected.item.note = v; MarkDirty(); };
             ui.CardDelete += () => { if (_selected != null) Delete(_selected); };
             ui.CardDone += () => Select(null);
+            ui.CardShapeChosen += shape =>
+            {
+                if (_selected == null || _selected.item.kind != "figure") return;
+                _selected.item.shape = shape;
+                var item = _selected.item; var shown = _selected.shown;
+                Despawn(_selected); var t = Spawn(item); t.shown = shown; t.placed = true; t.appear = 1f;
+                Select(t);
+                MarkDirty();
+            };
+            ui.CardPortraitPick += PickPortrait;
+            ui.CardPortraitClear += () =>
+            {
+                if (_selected == null) return;
+                _selected.item.portrait = null; ForgetPortrait(_selected.item.id); ApplyPortrait(_selected); RefreshCard(); MarkDirty();
+            };
+
+            ui.StepPrev += () => { StopPlay(); GoTo(_step - 1); };
+            ui.StepNext += () => { StopPlay(); GoTo(_step + 1); };
+            ui.StepAdd += AddStep;
+            ui.StepDelete += DeleteStep;
+            ui.StepPlay += () => { if (_playing) StopPlay(); else StartPlay(); };
+            ui.StepCaptionChanged += v => { Step.text = v; MarkDirty(); };
+
             ui.SetStoryColour(_colour);
             ui.SetStoryTool(_tool);
 
             // Press on a token = drag it, not the camera.
-            camCtl.claimPress = p => ui.StoryActive && _tool != "delete" && TokenAt(p) != null;
+            camCtl.claimPress = p => ui.StoryActive && !_playing && _tool != "delete" && TokenAt(p) != null;
 
             var saved = PlayerPrefs.GetString(PrefsKey, "");
-            if (!string.IsNullOrEmpty(saved)) Load(FromJson(saved));
+            Load(string.IsNullOrEmpty(saved) ? new StoryScene() : FromJson(saved));
         }
 
         public void SetActive(bool on)
         {
             ui.SetStoryActive(on);
-            if (!on) { Select(null); _threadFrom = null; }
+            if (!on) { Select(null); _threadFrom = null; StopPlay(); }
             SetTool("select");
+            RefreshSteps();
         }
 
         void SetTool(string tool)
@@ -130,8 +178,8 @@ namespace Nevishk
                 "object" => "Нажмите на карту, чтобы поставить сюжетный объект.",
                 "flag" => "Нажмите на карту, чтобы поставить флажок.",
                 "thread" => "Нить: выберите первое — персонажа, объект, флажок или место на карте.",
-                "delete" => "Нажмите на фигуру или нить, чтобы удалить.",
-                _ => "Перетаскивайте фигуры. Нажмите на фигуру, чтобы подписать её. Цвет — для новых фигур и нитей.",
+                "delete" => "Нажмите на фигуру или нить, чтобы убрать её с этого шага и следующих.",
+                _ => "Перетаскивайте фигуры. Нажмите на фигуру, чтобы подписать её. Шаги — внизу.",
             });
         }
 
@@ -141,6 +189,7 @@ namespace Nevishk
         public bool Tick(MapPin hoveredPin)
         {
             UpdateTokens();
+            if (_linesDirty) RebuildLines();
             UpdateLines();
             if (_dirty && Time.unscaledTime >= _saveAt) Save();
 
@@ -157,6 +206,12 @@ namespace Nevishk
             }
 
             if (!ui.StoryActive) return false;
+            if (_playing)
+            {
+                // Any click or Esc stops the playback.
+                if (MapInput.EscapeDown || (MapInput.PrimaryUp && !overUI && !camCtl.LastPressWasDrag)) { StopPlay(); return true; }
+                return false;
+            }
 
             // Keyboard: Esc cancels a half-made string or closes the card; Delete removes the selection.
             if (MapInput.EscapeDown && (_threadFrom != null || _selected != null)) { _threadFrom = null; Select(null); SetTool(_tool); return true; }
@@ -170,15 +225,18 @@ namespace Nevishk
                 {
                     _pressedOnToken = true;
                     _dragging = t; _pressPos = p;
-                    if (GroundPoint(p, out var gp)) _dragOffset = new Vector3(t.item.x - gp.x, 0, t.item.z - gp.z);
+                    var pos = PosOf(Step, t.item.id);
+                    if (pos != null && GroundPoint(p, out var gp)) _dragOffset = new Vector3(pos.x - gp.x, 0, pos.z - gp.z);
                 }
             }
             if (_dragging != null && MapInput.PrimaryHeld)
             {
-                if (GroundPoint(p, out var gp))
+                var pos = PosOf(Step, _dragging.item.id);
+                if (pos != null && GroundPoint(p, out var gp))
                 {
                     var w = clampToMap(gp + _dragOffset);
-                    _dragging.item.x = Round(w.x); _dragging.item.z = Round(w.z);
+                    pos.x = Round(w.x); pos.z = Round(w.z);
+                    _dragging.shown = new Vector2(pos.x, pos.z);
                     MarkDirty();
                 }
                 return true;
@@ -208,9 +266,13 @@ namespace Nevishk
                     var w = clampToMap(gp);
                     var item = new StoryItem
                     {
-                        id = "s" + _nextId++, kind = _tool, name = "", note = "", color = Hex(_colour), x = Round(w.x), z = Round(w.z)
+                        id = "s" + _nextId++, kind = _tool, shape = _tool == "figure" ? "pawn" : null,
+                        name = "", note = "", color = Hex(_colour)
                     };
                     _scene.items.Add(item);
+                    // A new piece enters at this step and stays for the following ones.
+                    for (int s = _step; s < _scene.steps.Count; s++)
+                        _scene.steps[s].pos.Add(new StoryPos { id = item.id, x = Round(w.x), z = Round(w.z) });
                     var t = Spawn(item);
                     MarkDirty();
                     SetTool("select");
@@ -229,9 +291,14 @@ namespace Nevishk
                     }
                     if (id != _threadFrom)
                     {
-                        var link = new StoryLink { a = _threadFrom, b = id, color = Hex(_colour) };
-                        _scene.links.Add(link);
-                        AddLine(link);
+                        string a = _threadFrom, col = Hex(_colour);
+                        for (int s = _step; s < _scene.steps.Count; s++)
+                        {
+                            var links = _scene.steps[s].links;
+                            if (!links.Exists(l => (l.a == a && l.b == id) || (l.a == id && l.b == a)))
+                                links.Add(new StoryLink { a = a, b = id, color = col });
+                        }
+                        _linesDirty = true;
                         MarkDirty();
                     }
                     _threadFrom = null;
@@ -242,7 +309,14 @@ namespace Nevishk
                 case "delete":
                     if (token != null) { Delete(token); return true; }
                     int li = LineAt(p);
-                    if (li >= 0) { RemoveLine(li); MarkDirty(); }
+                    if (li >= 0)
+                    {
+                        var dead = _lines[li].link;
+                        for (int s = _step; s < _scene.steps.Count; s++)
+                            _scene.steps[s].links.RemoveAll(l => (l.a == dead.a && l.b == dead.b) || (l.a == dead.b && l.b == dead.a));
+                        _linesDirty = true;
+                        MarkDirty();
+                    }
                     return true;
 
                 default:   // select
@@ -262,6 +336,77 @@ namespace Nevishk
 #endif
         }
 
+        // ---------------------------------------------------------------- steps
+
+        static StoryPos PosOf(StoryStep s, string id) => s.pos.Find(q => q.id == id);
+
+        void GoTo(int step)
+        {
+            if (_scene.steps.Count == 0) return;
+            _step = Mathf.Clamp(step, 0, _scene.steps.Count - 1);
+            _threadFrom = null;
+            if (_selected != null && PosOf(Step, _selected.item.id) == null) Select(null);
+            _linesDirty = true;
+            RefreshSteps();
+        }
+
+        void AddStep()
+        {
+            StopPlay();
+            // The new step starts as a copy of this one: move pieces to tell what happens next.
+            var copy = new StoryStep { text = "" };
+            foreach (var q in Step.pos) copy.pos.Add(new StoryPos { id = q.id, x = q.x, z = q.z });
+            foreach (var l in Step.links) copy.links.Add(new StoryLink { a = l.a, b = l.b, color = l.color });
+            _scene.steps.Insert(_step + 1, copy);
+            GoTo(_step + 1);
+            MarkDirty();
+            ui.Notice($"Шаг {_step + 1}: передвиньте фигуры — так рассказывается, что было дальше.");
+        }
+
+        void DeleteStep()
+        {
+            StopPlay();
+            if (_scene.steps.Count <= 1) { ui.Notice("Это единственный шаг."); return; }
+            _scene.steps.RemoveAt(_step);
+            // Pieces that no longer appear in any step leave the cast.
+            _scene.items.RemoveAll(it => !_scene.steps.Exists(s => PosOf(s, it.id) != null) && RemoveToken(it.id));
+            GoTo(Mathf.Min(_step, _scene.steps.Count - 1));
+            MarkDirty();
+        }
+
+        void StartPlay()
+        {
+            if (_scene.steps.Count < 2) { ui.Notice("Добавьте хотя бы два шага, чтобы проиграть сюжет."); return; }
+            Select(null); SetTool("select");
+            _playing = true;
+            if (_play != null) StopCoroutine(_play);
+            _play = StartCoroutine(Play());
+        }
+
+        IEnumerator Play()
+        {
+            int from = _step >= _scene.steps.Count - 1 ? 0 : _step;
+            for (int s = from; s < _scene.steps.Count; s++)
+            {
+                GoTo(s);
+                ui.ShowStoryCaption(s + 1, Step.text);
+                // Long captions stay up longer.
+                float hold = 2.6f + Mathf.Clamp((Step.text ?? "").Length * 0.045f, 0f, 6f);
+                yield return new WaitForSecondsRealtime(hold);
+            }
+            StopPlay();
+        }
+
+        void StopPlay()
+        {
+            if (_play != null) { StopCoroutine(_play); _play = null; }
+            _playing = false;
+            ui.ShowStoryCaption(0, null);
+            RefreshSteps();
+        }
+
+        void RefreshSteps() => ui.SetSteps(_step, _scene.steps.Count, Step.text, _playing);
+
         // ---------------------------------------------------------------- tokens
 
         Token Spawn(StoryItem item)
@@ -272,36 +417,21 @@ namespace Nevishk
             t.body = new GameObject("Body").transform;
             t.body.SetParent(t.go.transform, false);
             var parts = new List<Renderer>();
-            Material plain(Color c) => material(c);
             Color col = Col(item.color);
             switch (item.kind)
             {
-                case "figure":
-                    // A board-game pawn: base, body, collar, head.
-                    parts.Add(Part(t.body, PrimitiveType.Cylinder, new Vector3(0, 0.5f, 0), new Vector3(6f, 0.5f, 6f), col));
-                    parts.Add(Part(t.body, PrimitiveType.Cylinder, new Vector3(0, 4.2f, 0), new Vector3(3.2f, 3.4f, 3.2f), col));
-                    parts.Add(Part(t.body, PrimitiveType.Cylinder, new Vector3(0, 7.7f, 0), new Vector3(4.4f, 0.35f, 4.4f), col));
-                    parts.Add(Part(t.body, PrimitiveType.Sphere, new Vector3(0, 10.0f, 0), new Vector3(4.6f, 4.6f, 4.6f), col));
-                    t.topLocal = 12.3f;
-                    break;
+                case "figure": t.topLocal = BuildFigure(t, item.shape, col, parts); break;
                 case "object":
                     // A floating, slowly turning gem over a short post.
                     Part(t.body, PrimitiveType.Cylinder, new Vector3(0, 2.5f, 0), new Vector3(0.5f, 2.5f, 0.5f), new Color(0.2f, 0.2f, 0.2f));
                     t.spin = new GameObject("Gem").transform; t.spin.SetParent(t.body, false); t.spin.localPosition = new Vector3(0, 9f, 0);
-                    var gem = new GameObject("Gem mesh", typeof(MeshFilter), typeof(MeshRenderer));
-                    gem.transform.SetParent(t.spin, false); gem.transform.localScale = new Vector3(4f, 5.5f, 4f);
-                    gem.GetComponent<MeshFilter>().sharedMesh = Octahedron;
-                    var gr = gem.GetComponent<MeshRenderer>(); gr.sharedMaterial = Glossy(col); parts.Add(gr);
+                    parts.Add(MeshPart(t.spin, Octahedron, Vector3.zero, new Vector3(4f, 5.5f, 4f), Quaternion.identity, col));
                     t.topLocal = 14.5f;
                     break;
                 default:   // flag
                     Part(t.body, PrimitiveType.Cylinder, new Vector3(0, 7f, 0), new Vector3(0.45f, 7f, 0.45f), new Color(0.25f, 0.24f, 0.22f));
                     t.spin = new GameObject("Cloth").transform; t.spin.SetParent(t.body, false); t.spin.localPosition = new Vector3(0, 11.5f, 0);
-                    var cloth = new GameObject("Cloth mesh", typeof(MeshFilter), typeof(MeshRenderer));
-                    cloth.transform.SetParent(t.spin, false); cloth.transform.localPosition = new Vector3(3.2f, 0, 0);
-                    cloth.transform.localScale = new Vector3(6.4f, 4f, 0.25f);
-                    cloth.GetComponent<MeshFilter>().sharedMesh = NevishkBuildings.CubeMesh;
-                    var cr = cloth.GetComponent<MeshRenderer>(); cr.sharedMaterial = plain(col); parts.Add(cr);
+                    parts.Add(MeshPart(t.spin, NevishkBuildings.CubeMesh, new Vector3(3.2f, 0, 0), new Vector3(6.4f, 4f, 0.25f), Quaternion.identity, col));
                     t.topLocal = 14f;
                     break;
             }
@@ -315,23 +445,91 @@ namespace Nevishk
             t.label = makeLabel(t.go.transform, "");
             t.plate = t.label.GetComponentInChildren<SpriteRenderer>();
             SetLabel(t);
+
+            var pgo = new GameObject("Portrait", typeof(SpriteRenderer));
+            pgo.transform.SetParent(t.go.transform, false);
+            t.portrait = pgo.GetComponent<SpriteRenderer>();
+            t.portrait.sortingOrder = 3;
+            t.portrait.shadowCastingMode = ShadowCastingMode.Off;
+            ApplyPortrait(t);
+
             _tokens[item.id] = t;
-            Place(t);
             return t;
         }
 
-        Renderer Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Color c)
+        /// The figure shapes. Each returns the height its string attaches at.
+        float BuildFigure(Token t, string shape, Color col, List<Renderer> parts)
         {
-            var go = new GameObject(type.ToString(), typeof(MeshFilter), typeof(MeshRenderer));
+            var b = t.body;
+            switch (shape)
+            {
+                case "meeple":
+                    // The board-game person: legs, body, arms out, round head.
+                    parts.Add(Part(b, PrimitiveType.Cube, new Vector3(-1.3f, 2.2f, 0), new Vector3(1.9f, 4.4f, 2.2f), col));
+                    parts.Add(Part(b, PrimitiveType.Cube, new Vector3(1.3f, 2.2f, 0), new Vector3(1.9f, 4.4f, 2.2f), col));
+                    parts.Add(Part(b, PrimitiveType.Cube, new Vector3(0, 6.6f, 0), new Vector3(4.6f, 4.6f, 2.2f), col));
+                    parts.Add(Part(b, PrimitiveType.Cube, new Vector3(0, 7.6f, 0), new Vector3(9.4f, 1.9f, 2.2f), col));
+                    parts.Add(Part(b, PrimitiveType.Sphere, new Vector3(0, 10.6f, 0), new Vector3(3.6f, 3.6f, 2.6f), col));
+                    return 12.5f;
+                case "queen":
+                    // A taller pawn with a ring of crown points.
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.5f, 0), new Vector3(6.4f, 0.5f, 6.4f), col));
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 5.2f, 0), new Vector3(3.0f, 4.4f, 3.0f), col));
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 9.7f, 0), new Vector3(4.6f, 0.35f, 4.6f), col));
+                    parts.Add(Part(b, PrimitiveType.Sphere, new Vector3(0, 11.6f, 0), new Vector3(4.2f, 3.6f, 4.2f), col));
+                    for (int k = 0; k < 6; k++)
+                    {
+                        float a = k * Mathf.PI / 3f;
+                        parts.Add(MeshPart(b, NevishkBuildings.SpireMesh, new Vector3(Mathf.Cos(a) * 1.7f, 12.8f, Mathf.Sin(a) * 1.7f),
+                                           new Vector3(1.1f, 2.4f, 1.1f), Quaternion.identity, col));
+                    }
+                    return 15.5f;
+                case "cloak":
+                    // A hooded figure: a long cloak (cone) and a hood.
+                    parts.Add(MeshPart(b, NevishkBuildings.SpireMesh, Vector3.zero, new Vector3(6.4f, 10.5f, 6.4f), Quaternion.identity, col));
+                    parts.Add(Part(b, PrimitiveType.Sphere, new Vector3(0, 9.6f, 0), new Vector3(3.8f, 4.2f, 3.8f), col));
+                    return 12f;
+                case "rook":
+                    // A squat tower with battlements.
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.5f, 0), new Vector3(6.4f, 0.5f, 6.4f), col));
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 4.8f, 0), new Vector3(4.6f, 4.0f, 4.6f), col));
+                    for (int k = 0; k < 4; k++)
+                    {
+                        float a = k * Mathf.PI / 2f + Mathf.PI / 4f;
+                        parts.Add(Part(b, PrimitiveType.Cube, new Vector3(Mathf.Cos(a) * 1.7f, 9.6f, Mathf.Sin(a) * 1.7f), new Vector3(1.5f, 1.6f, 1.5f), col));
+                    }
+                    return 11f;
+                default:   // pawn
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.5f, 0), new Vector3(6f, 0.5f, 6f), col));
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 4.2f, 0), new Vector3(3.2f, 3.4f, 3.2f), col));
+                    parts.Add(Part(b, PrimitiveType.Cylinder, new Vector3(0, 7.7f, 0), new Vector3(4.4f, 0.35f, 4.4f), col));
+                    parts.Add(Part(b, PrimitiveType.Sphere, new Vector3(0, 10.0f, 0), new Vector3(4.6f, 4.6f, 4.6f), col));
+                    return 12.3f;
+            }
+        }
+
+        Renderer Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Color c) =>
+            MeshPart(parent, type == PrimitiveType.Sphere ? NevishkBuildings.SphereMesh
+                           : type == PrimitiveType.Cylinder ? NevishkBuildings.CylinderMesh : NevishkBuildings.CubeMesh,
+                     pos, scale, Quaternion.identity, c);
+
+        Renderer MeshPart(Transform parent, Mesh mesh, Vector3 pos, Vector3 scale, Quaternion rot, Color c)
+        {
+            var go = new GameObject("Part", typeof(MeshFilter), typeof(MeshRenderer));
             go.transform.SetParent(parent, false);
-            go.transform.localPosition = pos; go.transform.localScale = scale;
-            go.GetComponent<MeshFilter>().sharedMesh = type == PrimitiveType.Sphere ? NevishkBuildings.SphereMesh
-                                                    : type == PrimitiveType.Cylinder ? NevishkBuildings.CylinderMesh : NevishkBuildings.CubeMesh;
+            go.transform.localPosition = pos; go.transform.localScale = scale; go.transform.localRotation = rot;
+            go.GetComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.GetComponent<MeshRenderer>(); r.sharedMaterial = Glossy(c);
             return r;
         }
 
-        Material Glossy(Color c) { var m = new Material(material(c)); m.SetFloat("_Smoothness", 0.55f); return m; }
+        readonly Dictionary<Color, Material> _glossy = new Dictionary<Color, Material>();
+        Material Glossy(Color c)
+        {
+            if (_glossy.TryGetValue(c, out var m) && m != null) return m;
+            m = new Material(material(c)); m.SetFloat("_Smoothness", 0.55f);
+            return _glossy[c] = m;
+        }
 
         void Recolour(Token t)
         {
@@ -342,8 +540,8 @@ namespace Nevishk
 
         void SetLabel(Token t)
         {
-            string name = string.IsNullOrEmpty(t.item.name) ? "" : t.item.name;
-            t.label.text = $"<size=140%><color={Hex(Col(t.item.color))}>•</color></size> {(name.Length > 0 ? name : KindName(t.item.kind))}";
+            string name = string.IsNullOrEmpty(t.item.name) ? KindName(t.item.kind) : t.item.name;
+            t.label.text = $"<size=140%><color={Hex(Col(t.item.color))}>•</color></size> {name}";
             t.label.ForceMeshUpdate();
             if (t.plate != null)
             {
@@ -353,23 +551,44 @@ namespace Nevishk
             }
         }
 
-        void Place(Token t)
+        void Despawn(Token t)
         {
-            var w = new Vector3(t.item.x, 0, t.item.z);
-            w.y = ground(w);
-            t.go.transform.position = w;
+            if (_selected == t) _selected = null;
+            Destroy(t.go);
+            _tokens.Remove(t.item.id);
+        }
+
+        bool RemoveToken(string id)
+        {
+            if (_tokens.TryGetValue(id, out var t)) Despawn(t);
+            ForgetPortrait(id);
+            return true;
         }
 
         void UpdateTokens()
         {
-            if (cam == null) return;
-            float time = Time.unscaledTime;
+            if (cam == null || _scene.steps.Count == 0) return;
+            float time = Time.unscaledTime, dt = Time.unscaledDeltaTime;
             foreach (var t in _tokens.Values)
             {
-                Place(t);
+                var pos = PosOf(Step, t.item.id);
+                // Off the board in this step: shrink away.
+                t.appear = Mathf.MoveTowards(t.appear, pos != null ? 1f : 0f, dt * 3f);
+                if (t.appear <= 0f) { if (t.go.activeSelf) t.go.SetActive(false); continue; }
+                if (!t.go.activeSelf) t.go.SetActive(true);
+                if (pos != null)
+                {
+                    var target = new Vector2(pos.x, pos.z);
+                    if (!t.placed) { t.shown = target; t.placed = true; }
+                    else if (t != _dragging) t.shown = Vector2.Lerp(t.shown, target, 1f - Mathf.Exp(-4f * dt));   // glide between steps
+                }
+                var w = new Vector3(t.shown.x, 0f, t.shown.y);
+                w.y = ground(w);
+                t.go.transform.position = w;
+
                 // Figures are small next to the city; grow them when the camera is far away.
-                float d = Vector3.Distance(cam.transform.position, t.go.transform.position);
-                float s = Mathf.Clamp(d / 320f, 1f, 3.2f);
+                float d = Vector3.Distance(cam.transform.position, w);
+                float s = Mathf.Clamp(d / 320f, 1f, 3.2f) * Mathf.SmoothStep(0f, 1f, t.appear);
                 if (t == _selected) s *= 1f + 0.08f * Mathf.Sin(time * 5f);
                 if (t == _dragging) s *= 1.12f;
                 t.scale = s;
@@ -377,13 +596,24 @@ namespace Nevishk
                 if (t.spin != null)
                 {
                     if (t.item.kind == "object") t.spin.localRotation = Quaternion.Euler(0, time * 40f, 0);
-                    else t.spin.localRotation = Quaternion.Euler(0, 12f * Mathf.Sin(time * 1.7f + t.item.x), 0);
+                    else t.spin.localRotation = Quaternion.Euler(0, 12f * Mathf.Sin(time * 1.7f + t.shown.x), 0);
                 }
-                t.label.transform.localPosition = Vector3.up * (t.topLocal * s + 5f);
+                Quaternion face = Quaternion.LookRotation(t.go.transform.position - cam.transform.position, cam.transform.up);
+                float top = t.topLocal * s;
+                bool hasPortrait = t.portrait.sprite != null;
+                if (hasPortrait)
+                {
+                    float ps = 7.5f * Mathf.Max(s, 1f);
+                    t.portrait.transform.localPosition = Vector3.up * (top + 2f + ps * 0.5f);
+                    t.portrait.transform.rotation = face;
+                    t.portrait.transform.localScale = Vector3.one * ps;
+                    top += 2f + ps;
+                }
+                t.label.transform.localPosition = Vector3.up * (top + 5f);
                 t.label.transform.rotation = Quaternion.LookRotation(t.label.transform.position - cam.transform.position, cam.transform.up);
                 t.label.transform.localScale = Vector3.one * Mathf.Clamp(d / 600f, 0.15f, 2.5f);
                 var col = t.go.GetComponent<CapsuleCollider>();
-                col.center = new Vector3(0, t.topLocal * s * 0.5f, 0); col.height = t.topLocal * s + 2f; col.radius = 4.5f * s;
+                col.center = new Vector3(0, top * 0.5f, 0); col.height = top + 2f; col.radius = 4.5f * s;
             }
         }
 
@@ -391,18 +621,32 @@ namespace Nevishk
         {
             _selected = t;
             if (t == null) { ui.HideCard(); return; }
-            ui.ShowCard(KindName(t.item.kind), t.item.name, t.item.note, focusName);
+            RefreshCard(focusName);
         }
 
+        void RefreshCard(bool focusName = false)
+        {
+            if (_selected == null) return;
+            var it = _selected.item;
+            ui.ShowCard(KindName(it.kind), it.name, it.note, focusName, it.kind == "figure", it.shape ?? "pawn", PortraitRound(it));
+        }
+
+        /// Takes the piece off the board from this step on; once it's in no step at all it leaves the cast.
         void Delete(Token t)
         {
             string id = t.item.id;
-            _scene.items.Remove(t.item);
-            for (int i = _lines.Count - 1; i >= 0; i--)
-                if (_lines[i].link.a == id || _lines[i].link.b == id) RemoveLine(i);
-            Destroy(t.go);
-            _tokens.Remove(id);
+            for (int s = _step; s < _scene.steps.Count; s++)
+            {
+                _scene.steps[s].pos.RemoveAll(q => q.id == id);
+                _scene.steps[s].links.RemoveAll(l => l.a == id || l.b == id);
+            }
+            if (!_scene.steps.Exists(s => PosOf(s, id) != null))
+            {
+                _scene.items.Remove(t.item);
+                RemoveToken(id);
+            }
             if (_selected == t) Select(null);
+            _linesDirty = true;
             MarkDirty();
         }
 
@@ -415,7 +659,7 @@ namespace Nevishk
             foreach (var h in hits)
             {
                 var tag = h.collider.GetComponent<StoryTokenTag>();
-                if (tag != null && h.distance < bd && _tokens.TryGetValue(tag.id, out var t)) { best = t; bd = h.distance; }
+                if (tag != null && h.distance < bd && _tokens.TryGetValue(tag.id, out var t) && t.appear > 0.5f) { best = t; bd = h.distance; }
             }
             return best;
         }
@@ -425,7 +669,6 @@ namespace Nevishk
         {
             var ray = cam.ScreenPointToRay(screen);
             float step = 6f, t = 0f, max = cam.farClipPlane;
-            Vector3 prev = ray.origin;
             while (t < max)
             {
                 t += step;
@@ -446,32 +689,130 @@ namespace Nevishk
             point = default; return false;
         }
 
-        // ---------------------------------------------------------------- strings
+        // ---------------------------------------------------------------- portraits
 
-        void AddLine(StoryLink link)
+        readonly Dictionary<string, (Texture2D round, Sprite sprite)> _portraits = new Dictionary<string, (Texture2D, Sprite)>();
+        string _portraitFor;
+
+        void PickPortrait()
         {
-            var go = new GameObject("String", typeof(LineRenderer));
-            go.transform.SetParent(_root, false);
-            var lr = go.GetComponent<LineRenderer>();
-            lr.useWorldSpace = true; lr.positionCount = 24; lr.numCapVertices = 3;
-            lr.alignment = LineAlignment.View; lr.textureMode = LineTextureMode.Stretch;
-            lr.shadowCastingMode = ShadowCastingMode.Off; lr.receiveShadows = false;
-            lr.sharedMaterial = _lineMat;
-            var c = Col(link.color);
-            lr.startColor = lr.endColor = c;
-            _lines.Add((link, lr));
+            if (_selected == null) return;
+            _portraitFor = _selected.item.id;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            NevishkBrowser.OpenImageFile(gameObject.name, nameof(OnPortraitLoaded), 160);
+#elif UNITY_EDITOR
+            string path = UnityEditor.EditorUtility.OpenFilePanelWithFilters("Портрет", "", new[] { "Изображения", "png,jpg,jpeg" });
+            if (!string.IsNullOrEmpty(path)) OnPortraitLoaded(Convert.ToBase64String(System.IO.File.ReadAllBytes(path)));
+#else
+            ui.Notice("Загрузка портретов работает в веб-версии.");
+#endif
         }
 
-        void RemoveLine(int i)
+        /// Called from the browser with the picked image (base64; the page has already cropped it square and small).
+        public void OnPortraitLoaded(string base64)
         {
-            _scene.links.Remove(_lines[i].link);
-            Destroy(_lines[i].line.gameObject);
-            _lines.RemoveAt(i);
+            if (_portraitFor == null || !_tokens.TryGetValue(_portraitFor, out var t)) return;
+            var square = SquarePortrait(base64, 128);
+            if (square == null) { ui.Notice("Не удалось прочитать картинку."); return; }
+            t.item.portrait = Convert.ToBase64String(square.EncodeToJPG(85));
+            Destroy(square);
+            ForgetPortrait(t.item.id);
+            ApplyPortrait(t);
+            if (_selected == t) RefreshCard();
+            MarkDirty();
+        }
+
+        /// Decodes an image and centre-crops / scales it to size × size.
+        static Texture2D SquarePortrait(string base64, int size)
+        {
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(base64); } catch { return null; }
+            var src = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!src.LoadImage(bytes)) { Destroy(src); return null; }
+            int side = Mathf.Min(src.width, src.height);
+            float ox = (src.width - side) / 2f, oy = (src.height - side) / 2f;
+            var dst = new Texture2D(size, size, TextureFormat.RGB24, false);
+            var px = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+                px[y * size + x] = src.GetPixelBilinear((ox + (x + 0.5f) * side / size) / src.width, (oy + (y + 0.5f) * side / size) / src.height);
+            dst.SetPixels(px); dst.Apply();
+            Destroy(src);
+            return dst;
+        }
+
+        /// Round version of the item's portrait (alpha circle, thin bone rim), cached; null without a portrait.
+        Texture2D PortraitRound(StoryItem it)
+        {
+            if (string.IsNullOrEmpty(it.portrait)) return null;
+            if (_portraits.TryGetValue(it.id, out var cached) && cached.round != null) return cached.round;
+            var sq = SquarePortrait(it.portrait, 128);
+            if (sq == null) return null;
+            const int n = 128;
+            var round = new Texture2D(n, n, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp };
+            var src = sq.GetPixels(); var px = new Color[n * n];
+            Color rim = new Color(0.93f, 0.91f, 0.85f);
+            for (int y = 0; y < n; y++)
+            for (int x = 0; x < n; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(n / 2f, n / 2f));
+                Color c = d > n / 2f - 5f ? rim : src[y * n + x];
+                c.a = Mathf.Clamp01(n / 2f - d);
+                px[y * n + x] = c;
+            }
+            round.SetPixels(px); round.Apply(true);
+            Destroy(sq);
+            var sprite = Sprite.Create(round, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), n);
+            _portraits[it.id] = (round, sprite);
+            return round;
+        }
+
+        void ApplyPortrait(Token t)
+        {
+            PortraitRound(t.item);
+            t.portrait.sprite = _portraits.TryGetValue(t.item.id, out var p) ? p.sprite : null;
+            t.portrait.enabled = t.portrait.sprite != null;
+        }
+
+        void ForgetPortrait(string id)
+        {
+            if (_portraits.TryGetValue(id, out var p))
+            {
+                if (p.sprite != null) Destroy(p.sprite);
+                if (p.round != null) Destroy(p.round);
+                _portraits.Remove(id);
+            }
+        }
+
+        // ---------------------------------------------------------------- strings
+
+        void RebuildLines()
+        {
+            _linesDirty = false;
+            foreach (var (_, lr) in _lines) Destroy(lr.gameObject);
+            _lines.Clear();
+            if (_scene.steps.Count == 0) return;
+            foreach (var link in Step.links)
+            {
+                var go = new GameObject("String", typeof(LineRenderer));
+                go.transform.SetParent(_root, false);
+                var lr = go.GetComponent<LineRenderer>();
+                lr.useWorldSpace = true; lr.positionCount = 24; lr.numCapVertices = 3;
+                lr.alignment = LineAlignment.View; lr.textureMode = LineTextureMode.Stretch;
+                lr.shadowCastingMode = ShadowCastingMode.Off; lr.receiveShadows = false;
+                lr.sharedMaterial = _lineMat;
+                lr.startColor = lr.endColor = Col(link.color);
+                _lines.Add((link, lr));
+            }
         }
 
         Vector3? Anchor(string id)
         {
-            if (_tokens.TryGetValue(id, out var t)) return t.go.transform.position + Vector3.up * (t.topLocal * t.scale - 1f);
+            if (_tokens.TryGetValue(id, out var t))
+            {
+                if (!t.go.activeSelf || t.appear < 0.3f) return null;
+                return t.go.transform.position + Vector3.up * (t.topLocal * t.scale - 1f);
+            }
             return anchorOf(id);
         }
 
@@ -527,26 +868,46 @@ namespace Nevishk
             Select(null);
             foreach (var t in _tokens.Values) Destroy(t.go);
             _tokens.Clear();
-            foreach (var (_, lr) in _lines) Destroy(lr.gameObject);
-            _lines.Clear();
+            foreach (var id in new List<string>(_portraits.Keys)) ForgetPortrait(id);
 
             _scene = scene ?? new StoryScene();
-            _scene.items ??= new List<StoryItem>(); _scene.links ??= new List<StoryLink>();
+            _scene.items ??= new List<StoryItem>();
+            _scene.steps ??= new List<StoryStep>();
+            // v1: one arrangement, positions on the items and strings on the scene → a single step.
+            if (_scene.steps.Count == 0)
+            {
+                var first = new StoryStep();
+                foreach (var it in _scene.items) if (it != null) first.pos.Add(new StoryPos { id = it.id, x = it.x, z = it.z });
+                if (_scene.links != null) first.links.AddRange(_scene.links);
+                _scene.steps.Add(first);
+            }
+            _scene.links = null;
+            _scene.v = 2;
+
             _nextId = 1;
+            _scene.items.RemoveAll(it => it == null || string.IsNullOrEmpty(it.id));
+            var seen = new HashSet<string>();
+            _scene.items.RemoveAll(it => !seen.Add(it.id));
             foreach (var it in _scene.items)
             {
-                if (string.IsNullOrEmpty(it.id) || _tokens.ContainsKey(it.id)) it.id = "s" + (1000 + _nextId);
                 if (it.id.StartsWith("s") && int.TryParse(it.id.Substring(1), out int n)) _nextId = Mathf.Max(_nextId, n + 1);
                 if (it.kind != "figure" && it.kind != "object" && it.kind != "flag") it.kind = "figure";
-                var w = clampToMap(new Vector3(it.x, 0, it.z)); it.x = w.x; it.z = w.z;
                 Spawn(it);
             }
-            // Drop strings whose ends no longer exist.
-            _scene.links.RemoveAll(l => l == null || Anchor(l.a) == null || Anchor(l.b) == null);
-            foreach (var l in _scene.links) AddLine(l);
+            foreach (var s in _scene.steps)
+            {
+                s.pos ??= new List<StoryPos>(); s.links ??= new List<StoryLink>(); s.text ??= "";
+                s.pos.RemoveAll(q => q == null || !_tokens.ContainsKey(q.id));
+                foreach (var q in s.pos) { var w = clampToMap(new Vector3(q.x, 0, q.z)); q.x = w.x; q.z = w.z; }
+                s.links.RemoveAll(l => l == null || string.IsNullOrEmpty(l.a) || string.IsNullOrEmpty(l.b)
+                                       || (!_tokens.ContainsKey(l.a) && anchorOf(l.a) == null) || (!_tokens.ContainsKey(l.b) && anchorOf(l.b) == null));
+            }
+            _step = 0;
+            _linesDirty = true;
+            RefreshSteps();
         }
 
-        void MarkDirty() { _dirty = true; _saveAt = Time.unscaledTime + 0.6f; }
+        void MarkDirty() { _dirty = true; _saveAt = Time.unscaledTime + 0.6f; RefreshSteps(); }
 
         void Save()
         {
@@ -555,9 +916,11 @@ namespace Nevishk
             PlayerPrefs.Save();
         }
 
+        bool IsEmpty => _scene.items.Count == 0;
+
         void Backup()
         {
-            if (_scene.items.Count == 0 && _scene.links.Count == 0) return;
+            if (IsEmpty) return;
             PlayerPrefs.SetString(BackupKey, JsonUtility.ToJson(_scene));
             PlayerPrefs.Save();
         }
@@ -566,6 +929,7 @@ namespace Nevishk
         {
             var json = PlayerPrefs.GetString(BackupKey, "");
             if (string.IsNullOrEmpty(json)) return;
+            StopPlay();
             Load(FromJson(json));
             MarkDirty();
             ui.Notice("Прежний сюжет возвращён.");
@@ -612,23 +976,29 @@ namespace Nevishk
         {
             var scene = FromJson(json);
             if (scene == null || scene.items == null) { ui.Notice("Это не файл сюжета."); return; }
+            StopPlay();
             Backup();
             Load(scene);
             MarkDirty();
-            ui.Notice($"Сюжет открыт: {scene.items.Count} фигур, {scene.links.Count} нитей.", "Вернуть прежний", RestoreBackup, 10f);
+            ui.Notice($"Сюжет открыт: {_scene.items.Count} фигур, {_scene.steps.Count} шаг(ов).", "Вернуть прежний", RestoreBackup, 10f);
         }
 
         void ShareLink()
         {
-            string payload = Base64Url(Encoding.UTF8.GetBytes(JsonUtility.ToJson(_scene)));
+            // Portraits would make the address enormous; they travel in files only.
+            var copy = FromJson(JsonUtility.ToJson(_scene));
+            bool hadPortraits = false;
+            foreach (var it in copy.items) if (!string.IsNullOrEmpty(it.portrait)) { it.portrait = null; hadPortraits = true; }
+            string payload = Base64Url(Encoding.UTF8.GetBytes(JsonUtility.ToJson(copy)));
             string hash = "story=" + payload;
+            string extra = hadPortraits ? " Портреты в ссылку не входят — для них сохраните файл." : "";
 #if UNITY_WEBGL && !UNITY_EDITOR
             NevishkBrowser.CopyLinkWithHash(hash);
-            ui.Notice("Ссылка на сюжет скопирована. Кто её откроет, увидит эту сцену.");
+            ui.Notice("Ссылка на сюжет скопирована." + extra, null, null, 8f);
 #else
             GUIUtility.systemCopyBuffer = "#" + hash;
             Debug.Log("[Nevishk] Story link hash copied (" + hash.Length + " chars).");
-            ui.Notice("Ссылка скопирована (в редакторе — только часть после #).");
+            ui.Notice("Ссылка скопирована (в редакторе — только часть после #)." + extra, null, null, 8f);
 #endif
         }
 
@@ -638,6 +1008,7 @@ namespace Nevishk
             StoryScene scene = null;
             try { scene = FromJson(Encoding.UTF8.GetString(FromBase64Url(payload))); } catch { }
             if (scene == null || scene.items == null) { ui.Notice("Ссылка на сюжет повреждена."); return; }
+            StopPlay();
             Backup();
             Load(scene);
             MarkDirty();

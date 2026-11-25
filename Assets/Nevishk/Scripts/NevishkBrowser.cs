@@ -17,6 +17,7 @@ namespace Nevishk
         [DllImport("__Internal")] static extern void NevishkDownload(string fileName, string text);
         [DllImport("__Internal")] static extern void NevishkOpenFile(string gameObjectName, string method);
         [DllImport("__Internal")] static extern void NevishkCopyLink(string hash);
+        [DllImport("__Internal")] static extern void NevishkOpenImage(string gameObjectName, string method, int size);
 
         public static string GetHash() => NevishkGetHash();
         public static void SetHash(string hash, bool push) => NevishkSetHash(hash ?? "", push ? 1 : 0);
@@ -28,6 +29,9 @@ namespace Nevishk
         public static void OpenTextFile(string gameObjectName, string method) => NevishkOpenFile(gameObjectName, method);
         /// Copies this page's address with the given hash to the clipboard.
         public static void CopyLinkWithHash(string hash) => NevishkCopyLink(hash);
+        /// Lets the visitor pick a picture; it's cropped square and scaled to `size` px in the page, then sent as
+        /// base64 JPEG via SendMessage(gameObjectName, method, base64).
+        public static void OpenImageFile(string gameObjectName, string method, int size) => NevishkOpenImage(gameObjectName, method, size);
 #else
         public static string GetHash() => "";
         public static void SetHash(string hash, bool push) { }
@@ -36,6 +40,7 @@ namespace Nevishk
         public static void Download(string fileName, string text) { }
         public static void OpenTextFile(string gameObjectName, string method) { }
         public static void CopyLinkWithHash(string hash) { }
+        public static void OpenImageFile(string gameObjectName, string method, int size) { }
 #endif
     }
 }
