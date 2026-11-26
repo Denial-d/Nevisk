@@ -116,3 +116,6 @@ InitTestScene*.unity*
 # Unity crash-recovery scene backups
 /[Aa]ssets/_Recovery/
 /[Aa]ssets/_Recovery.meta
+
+# Intermediate files Unity writes at the project root during web builds
+/Data/
