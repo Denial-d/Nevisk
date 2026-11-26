@@ -169,3 +169,7 @@ Packages/packages-lock.json linguist-generated
 
 # Exceptions for .asset files such as lightning pre-baking
 LightingData.asset     binary
+
+# The web build (made in Unity: Nevishk > Build for Web) is published as-is by GitHub Pages:
+# keep it out of LFS so the deploy needs no LFS download.
+WebBuild/** -filter -diff -merge binary

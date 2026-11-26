@@ -1,0 +1,1184 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Text;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem.UI;
+#endif
+using T = Nevishk.NevishkTheme;
+
+namespace Nevishk
+{
+    /// <summary>
+    /// Builds the whole screen UI at runtime: header with search, category legend, district bar,
+    /// hover tooltip, and the reading panel for districts, landmarks and archive documents.
+    /// All colours, sizes and fonts come from NevishkTheme / NevishkFonts.
+    /// </summary>
+    public partial class LorePanelUI : MonoBehaviour
+    {
+        public event Action<string> DistrictClicked;
+        public event Action<string> LandmarkClicked;
+        public event Action ResetClicked;
+        public event Action PanelClosed;
+        /// <summary>Raised after an entry renders: (entry id or null, wasBackNavigation).</summary>
+        public event Action<string, bool> EntryShown;
+
+        public bool ReducedMotion { get; set; }
+        public const float ReferenceWidth = 1920f, ReferenceHeight = 1080f;
+        public bool PanelOpen => _panel != null && _panel.gameObject.activeSelf;
+        public bool LightboxOpen => _lightbox != null && _lightbox.gameObject.activeSelf;
+
+        LoreDatabase _db;
+        RectTransform _canvasRect, _panel, _content, _tooltipRect;
+        CanvasGroup _panelGroup;
+        ScrollRect _scroll;
+        TextMeshProUGUI _kicker, _title, _meta, _tooltip;
+        Button _backBtn;
+        TMP_InputField _search;
+        RectTransform _lightbox;
+        RawImage _lightboxImage;
+        AspectRatioFitter _lightboxFit;
+        TextMeshProUGUI _lightboxCaption;
+        readonly Dictionary<string, Image> _districtUnderlines = new Dictionary<string, Image>();
+
+        struct Entry { public Action render; public string id; }
+        readonly Stack<Entry> _history = new Stack<Entry>();
+        Entry _current;
+        bool _portrait;
+        Coroutine _anim;
+        bool _closing;
+
+        public void Build(LoreDatabase db)
+        {
+            _db = db;
+            _portrait = Screen.height > Screen.width;
+            EnsureEventSystem();
+
+            var canvasGo = new GameObject("Nevishk UI", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            canvasGo.transform.SetParent(transform, false);
+            var canvas = canvasGo.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 10;
+            var scaler = canvasGo.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(ReferenceWidth, ReferenceHeight);   // larger reference = smaller UI
+            scaler.matchWidthOrHeight = 0.5f;
+            _canvasRect = (RectTransform)canvasGo.transform;
+
+            BuildHeader();
+            if (!_portrait) BuildLegend();
+            BuildPanel();
+            BuildDistrictBar();
+            SetDrawer(false, true);
+            BuildStoryUI();
+            BuildTooltip();
+            BuildLightbox();
+            _panel.gameObject.SetActive(false);
+        }
+
+        // ================================================================ public API
+
+        public void ShowDistrict(string id, bool pushHistory = true) =>
+            Show(new Entry { id = id, render = () => RenderDistrict(id) }, pushHistory);
+
+        public void ShowLandmark(string id, bool pushHistory = true) =>
+            Show(new Entry { id = id, render = () => RenderLandmark(id) }, pushHistory);
+
+        public void ShowDocument(string id, bool pushHistory = true) =>
+            Show(new Entry { id = id, render = () => RenderDocument(id) }, pushHistory);
+
+        public void Close()
+        {
+            CloseLightbox();
+            if (!PanelOpen) return;
+            _history.Clear(); _current = default;
+            SetActiveDistrict(null);
+            Animate(false);
+            PanelClosed?.Invoke();
+        }
+
+        public void SetActiveDistrict(string id)
+        {
+            foreach (var kv in _districtUnderlines) kv.Value.enabled = kv.Key == id;
+        }
+
+        public void SetTooltip(string text, Vector2 screenPos)
+        {
+            if (string.IsNullOrEmpty(text)) { _tooltipRect.gameObject.SetActive(false); return; }
+            _tooltipRect.gameObject.SetActive(true);
+            _tooltip.text = text;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(_canvasRect, screenPos, null, out var local);
+            _tooltipRect.anchoredPosition = local + new Vector2(18f, 18f);
+        }
+
+        // ================================================================ navigation
+
+        void Show(Entry entry, bool pushHistory)
+        {
+            bool wasOpen = PanelOpen;
+            if (pushHistory && wasOpen && _current.render != null) _history.Push(_current);
+            if (!pushHistory) _history.Clear();
+            _current = entry;
+            Render(false);
+            if (!wasOpen || _closing) Animate(true);
+        }
+
+        void Back()
+        {
+            if (_history.Count == 0) return;
+            _current = _history.Pop();
+            Render(true);
+        }
+
+        void Render(bool isBack)
+        {
+            _panel.gameObject.SetActive(true);
+            ClearContent();
+            _kicker.color = T.Accent;
+            _langBtn.gameObject.SetActive(false);   // the renderers switch it on when the entry has a translation
+            _current.render();
+            _backBtn.gameObject.SetActive(_history.Count > 0);
+            Canvas.ForceUpdateCanvases();
+            _scroll.verticalNormalizedPosition = 1f;
+            EntryShown?.Invoke(_current.id, isBack);
+        }
+
+        // ---- the official-language switch (Loom of Echoes)
+        RectTransform _langBtn;
+        TextMeshProUGUI _langLabel;
+        bool _readRussian;
+
+        /// Shows the switch for this entry and says whether to render its Russian version.
+        bool ShowRussian(LoreTranslation t)
+        {
+            bool has = LoreTranslation.Has(t);
+            _langBtn.gameObject.SetActive(has);
+            _langLabel.text = _readRussian ? "Read in English" : "Читать на русском";
+            var r = _langBtn; r.sizeDelta = new Vector2(_langLabel.GetPreferredValues().x + 26f, T.TouchTarget);
+            return has && _readRussian;
+        }
+
+        void ToggleLanguage()
+        {
+            _readRussian = !_readRussian;
+            Render(true);   // same entry, no history step
+        }
+
+        /// The in-world warning above the Russian text: the translation is accurate, the world says it isn't.
+        void AddBannedTranslationNote()
+        {
+            var t = AddText(
+                $"<font-weight=700><size=80%><cspace=0.15em>НЕОФИЦИАЛЬНЫЙ ПЕРЕВОД</cspace></size></font-weight>\n" +
+                "<i>Текст может быть неточным: официальный перевод на русский язык запрещён. " +
+                "Перевод выполнен экстремистами, отказывающимися признать закон.</i>",
+                NevishkFonts.Reading, T.SizeBody - 3, T.Stamp);
+            t.margin = new Vector4(14, T.S1, 0, T.S2);
+            // A thin red rule down the left side, like an archive stamp.
+            var rule = NewRect("Rule", t.transform);
+            rule.anchorMin = new Vector2(0, 0); rule.anchorMax = new Vector2(0, 1); rule.pivot = new Vector2(0, 0.5f);
+            rule.sizeDelta = new Vector2(3, -T.S1); rule.anchoredPosition = new Vector2(0, -T.S1 * 0.25f);
+            var img = rule.gameObject.AddComponent<Image>(); img.color = T.Stamp; img.raycastTarget = false;
+        }
+
+        static string EnglishCategory(string category) => category switch
+        {
+            "production" => "PRODUCTION",
+            "infrastructure" => "INFRASTRUCTURE",
+            "culture" => "CULTURE",
+            "education" => "EDUCATION",
+            "gathering" => "GATHERING PLACE",
+            _ => "PLACE",
+        };
+
+        void Animate(bool open)
+        {
+            if (_anim != null) StopCoroutine(_anim);
+            _closing = !open;
+            _anim = StartCoroutine(AnimatePanel(open));
+        }
+
+        // Enter 220 ms ease-out, exit 150 ms (exit faster than enter). Instant under reduced motion.
+        IEnumerator AnimatePanel(bool open)
+        {
+            _panel.gameObject.SetActive(true);
+            Vector2 home = Vector2.zero;
+            Vector2 away = home + (_portrait ? new Vector2(0, -120) : new Vector2(80, 0));
+            float dur = ReducedMotion ? 0f : open ? 0.22f : 0.15f;
+            for (float t = 0; t < dur; t += Time.unscaledDeltaTime)
+            {
+                float k = t / dur;
+                float e = open ? 1f - Mathf.Pow(1f - k, 3f) : k * k;
+                _panelGroup.alpha = open ? e : 1f - e;
+                _panel.anchoredPosition = open ? Vector2.Lerp(away, home, e) : Vector2.Lerp(home, away, e);
+                yield return null;
+            }
+            _panelGroup.alpha = open ? 1f : 0f;
+            _panel.anchoredPosition = home;
+            if (!open) _panel.gameObject.SetActive(false);
+            _anim = null; _closing = false;
+        }
+
+        // ================================================================ entry rendering
+
+        void RenderDistrict(string id)
+        {
+            var d = _db.District(id);
+            if (d == null) return;
+            SetActiveDistrict(id);
+            bool ru = ShowRussian(d.ru);
+            _kicker.text = ru || string.IsNullOrEmpty(d.kicker) ? $"РАЙОН {d.number}" : d.kicker;
+            _title.text = ru && !string.IsNullOrEmpty(d.ru.name) ? d.ru.name : d.name;
+            string summary = ru && !string.IsNullOrEmpty(d.ru.summary) ? d.ru.summary : d.summary;
+            var meta = new List<string>();
+            if (!string.IsNullOrEmpty(summary)) meta.Add($"<i>{summary}</i>");
+            if (!string.IsNullOrEmpty(d.owner)) meta.Add("ведёт " + d.owner);
+            if (!string.IsNullOrEmpty(d.status)) meta.Add(StatusRu(d.status));
+            _meta.text = string.Join("   ·   ", meta);
+
+            AddLeadPhoto(d.images);
+            if (ru) AddBannedTranslationNote();
+            string body = ru ? d.ru.text : d.text;
+            if (!string.IsNullOrEmpty(body)) AddBody(body);
+            else AddNote("Лор района ещё пишется.");
+            AddMorePhotos(d.images);
+
+            AddDocRows(d.docs);
+
+            var places = new List<LandmarkInfo>(_db.LandmarksIn(id));
+            if (places.Count > 0)
+            {
+                // Entries with lore first, then alphabetical.
+                places.Sort((a, b) =>
+                {
+                    int la = string.IsNullOrEmpty(a.text) ? 1 : 0, lb = string.IsNullOrEmpty(b.text) ? 1 : 0;
+                    return la != lb ? la.CompareTo(lb) : string.Compare(a.name, b.name, StringComparison.CurrentCulture);
+                });
+                AddSection($"Места · {places.Count}");
+                foreach (var l in places)
+                {
+                    var cat = _db.Category(l.category);
+                    var lid = l.id;
+                    AddRow(ru && LoreTranslation.Has(l.ru) && !string.IsNullOrEmpty(l.ru.name) ? l.ru.name : l.name, (cat != null ? cat.name : "") + (string.IsNullOrEmpty(l.text) ? "" : "  ·  есть лор"),
+                           () => LandmarkClicked?.Invoke(lid), NevishkColors.ForCategory(_db, l.category), !string.IsNullOrEmpty(l.text));
+                }
+            }
+        }
+
+        void RenderLandmark(string id)
+        {
+            var l = _db.Landmark(id);
+            if (l == null) return;
+            var cat = _db.Category(l.category);
+            var dist = _db.District(l.district);
+            SetActiveDistrict(dist?.id);
+            bool ru = ShowRussian(l.ru);
+            _kicker.text = LoreTranslation.Has(l.ru) && !ru ? EnglishCategory(l.category) : (cat != null ? cat.name : "").ToUpperInvariant();
+            _title.text = ru && !string.IsNullOrEmpty(l.ru.name) ? l.ru.name : l.name;
+            _meta.text = dist != null
+                ? $"Район {dist.number} · <link=\"d:{dist.id}\"><color={T.ToHex(T.Accent)}><u>{dist.name}</u></color></link>"
+                : "";
+
+            AddLeadPhoto(l.images);
+            if (ru) AddBannedTranslationNote();
+            string body = ru ? l.ru.text : l.text;
+            if (!string.IsNullOrEmpty(body)) AddBody(body);
+            else AddNote("Описания пока нет.");
+            AddMorePhotos(l.images);
+
+            AddDocRows(l.docs);
+            if (dist != null)
+            {
+                AddSection("Район");
+                var did = dist.id;
+                AddRow(dist.name, $"Район {dist.number}", () => DistrictClicked?.Invoke(did), JsonColor(dist.color), false);
+            }
+        }
+
+        void RenderDocument(string id)
+        {
+            var doc = _db.Document(id);
+            if (doc == null) return;
+            _kicker.text = KindRu(doc.kind);
+            _kicker.color = doc.kind == "archive" ? T.Stamp : T.Accent;
+            _title.text = doc.title;
+            _meta.text = string.IsNullOrEmpty(doc.author) ? "" : "Автор: " + doc.author;
+            AddBody(doc.text);
+            AddEndMark();
+        }
+
+        void RenderArchiveIndex()
+        {
+            _kicker.text = "ВСЕ МАТЕРИАЛЫ";
+            _title.text = "Архив Невишка";
+            _meta.text = $"{_db.documents.Length} документов";
+            foreach (var doc in _db.documents)
+            {
+                var did = doc.id;
+                AddRow(doc.title, KindRu(doc.kind) + (string.IsNullOrEmpty(doc.author) ? "" : "  ·  " + doc.author),
+                       () => ShowDocument(did), doc.kind == "archive" ? T.Stamp : T.Accent, true);
+            }
+        }
+
+        void RenderSearch(string q)
+        {
+            _kicker.text = "ПОИСК";
+            _title.text = $"«{q}»";
+            int hits = 0;
+            var cmp = StringComparison.CurrentCultureIgnoreCase;
+
+            var names = new List<Action>();
+            foreach (var d in _db.districts)
+                if (d.name.IndexOf(q, cmp) >= 0 || (d.text ?? "").IndexOf(q, cmp) >= 0 || (d.ru?.text ?? "").IndexOf(q, cmp) >= 0)
+                {
+                    var id = d.id; var nm = d.name; var num = d.number; var col = JsonColor(d.color);
+                    names.Add(() => AddRow(nm, $"Район {num}", () => DistrictClicked?.Invoke(id), col, true));
+                }
+            foreach (var l in _db.landmarks)
+                if (l.name.IndexOf(q, cmp) >= 0 || (l.text ?? "").IndexOf(q, cmp) >= 0
+                    || (l.ru?.name ?? "").IndexOf(q, cmp) >= 0 || (l.ru?.text ?? "").IndexOf(q, cmp) >= 0)
+                {
+                    var id = l.id; var nm = l.name; var sub = _db.District(l.district)?.name ?? ""; var col = NevishkColors.ForCategory(_db, l.category);
+                    var lore = !string.IsNullOrEmpty(l.text);
+                    names.Add(() => AddRow(nm, sub, () => LandmarkClicked?.Invoke(id), col, lore));
+                }
+            if (names.Count > 0) { AddSection("Места и районы"); foreach (var a in names) a(); hits += names.Count; }
+
+            var docs = new List<DocumentInfo>();
+            foreach (var doc in _db.documents)
+                if (doc.title.IndexOf(q, cmp) >= 0 || doc.text.IndexOf(q, cmp) >= 0) docs.Add(doc);
+            if (docs.Count > 0)
+            {
+                AddSection("Архив");
+                foreach (var doc in docs)
+                {
+                    var did = doc.id;
+                    AddRow(doc.title, $"{Count(doc.text, q)} совп.", () => ShowDocument(did), T.Stamp, true);
+                }
+                hits += docs.Count;
+            }
+            _meta.text = hits == 0 ? "Ничего не найдено." : $"{hits} результатов";
+            if (hits == 0) AddNote("Попробуйте другое слово: название района, места или имя.");
+        }
+
+        static int Count(string text, string q)
+        {
+            int n = 0, i = 0;
+            while ((i = text.IndexOf(q, i, StringComparison.CurrentCultureIgnoreCase)) >= 0) { n++; i += q.Length; }
+            return n;
+        }
+
+        void AddDocRows(string[] docs)
+        {
+            if (docs == null || docs.Length == 0) return;
+            AddSection("Из архива");
+            foreach (var docId in docs)
+            {
+                var doc = _db.Document(docId);
+                if (doc == null) continue;
+                var did = docId;
+                AddRow(doc.title, KindRu(doc.kind), () => ShowDocument(did), doc.kind == "archive" ? T.Stamp : T.Accent, true);
+            }
+        }
+
+        static string StatusRu(string s) => s switch
+        {
+            "Complete" => "готов", "In Progress" => "в работе", "Not Started" => "не начат", _ => s
+        };
+
+        static string KindRu(string k) => k switch
+        {
+            "archive" => "АРХИВ · ДЕЛО", "history" => "ИСТОРИЯ", "factions" => "ФРАКЦИИ", "places" => "МЕСТА",
+            "notes" => "ЗАМЕТКИ", "glossary" => "ТЕРМИНЫ", _ => "ДОКУМЕНТ"
+        };
+
+        static Color JsonColor(string hex) => LoreDatabase.ParseColor(hex, Color.gray);
+
+        // ================================================================ content builders
+
+        void ClearContent()
+        {
+            for (int i = _content.childCount - 1; i >= 0; i--) Destroy(_content.GetChild(i).gameObject);
+        }
+
+        void AddBody(string text)
+        {
+            // A single TMP mesh tops out around ~16k glyphs, so long documents are split by paragraph.
+            const int chunk = 2500;
+            var paragraphs = text.Split(new[] { "\n\n" }, StringSplitOptions.None);
+            var sb = new StringBuilder();
+            foreach (var p in paragraphs)
+            {
+                if (sb.Length > 0 && sb.Length + p.Length > chunk) { AddReading(sb.ToString()); sb.Clear(); }
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(p);
+            }
+            if (sb.Length > 0) AddReading(sb.ToString());
+        }
+
+        void AddReading(string text)
+        {
+            var t = AddText(text, NevishkFonts.Reading, T.SizeBody, T.Text);
+            t.lineSpacing = T.BodyLineSpacing;
+            t.paragraphSpacing = T.BodyParagraphSpacing;
+        }
+
+        void AddNote(string text)
+        {
+            var t = AddText($"<i>{text}</i>", NevishkFonts.Reading, T.SizeBody - 2, T.TextMuted);
+            t.margin = new Vector4(0, T.S1, 0, T.S1);
+        }
+
+        void AddEndMark()
+        {
+            var t = AddText("*   *   *", NevishkFonts.Reading, T.SizeBody, T.Faint);
+            t.alignment = TextAlignmentOptions.Center;
+            t.margin = new Vector4(0, T.S3, 0, 0);
+        }
+
+        void AddSection(string title)
+        {
+            var go = new GameObject("Section", typeof(RectTransform), typeof(LayoutElement));
+            go.transform.SetParent(_content, false);
+            go.GetComponent<LayoutElement>().minHeight = T.S6;
+            var rule = NewRect("Rule", go.transform);
+            rule.anchorMin = new Vector2(0, 1); rule.anchorMax = new Vector2(1, 1); rule.pivot = new Vector2(0.5f, 1);
+            rule.sizeDelta = new Vector2(0, 1); rule.anchoredPosition = new Vector2(0, -T.S2);
+            rule.gameObject.AddComponent<Image>().color = T.Border;
+            var t = NewText("Title", go.transform, title.ToUpperInvariant(), NevishkFonts.UIBold, T.SizeKicker, T.TextMuted);
+            t.characterSpacing = T.KickerTracking;
+            var r = t.rectTransform; r.anchorMin = Vector2.zero; r.anchorMax = Vector2.one; r.offsetMin = Vector2.zero; r.offsetMax = new Vector2(0, -T.S2 - 4);
+            t.alignment = TextAlignmentOptions.BottomLeft;
+        }
+
+        // ---------------------------------------------------------------- photos
+
+        static readonly Dictionary<string, Texture2D> _photoCache = new Dictionary<string, Texture2D>();
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() => _photoCache.Clear();
+
+        static Texture2D Photo(string file)
+        {
+            if (string.IsNullOrEmpty(file)) return null;
+            if (_photoCache.TryGetValue(file, out var t) && t != null) return t;
+            t = Resources.Load<Texture2D>("Images/" + file);
+            if (t == null) Debug.LogWarning($"[Nevishk] Image Resources/Images/{file} missing.");
+            _photoCache[file] = t;
+            return t;
+        }
+
+        /// First photo above the text; the rest go in a «Снимки» gallery after it.
+        void AddLeadPhoto(ImageInfo[] photos)
+        {
+            if (photos != null && photos.Length > 0) AddPhoto(photos[0], true);
+        }
+
+        void AddMorePhotos(ImageInfo[] photos)
+        {
+            if (photos == null || photos.Length < 2) return;
+            AddSection($"Снимки · {photos.Length - 1}");
+            AddPhotoGrid(photos, 1);
+        }
+
+        /// One photo across the full column, at its own aspect ratio, with the caption under it.
+        void AddPhoto(ImageInfo info, bool lead)
+        {
+            var tex = Photo(info.file);
+            if (tex == null) return;
+            var go = new GameObject(lead ? "Lead Photo" : "Photo", typeof(RectTransform));
+            go.transform.SetParent(_content, false);
+            // Wide shots keep their shape; square and tall ones are cropped to 4:3 so the text isn't pushed off screen.
+            float ratio = (float)tex.height / tex.width;
+            go.AddComponent<HeightFromWidth>().ratio = Mathf.Min(ratio, 0.75f);
+            PhotoCell((RectTransform)go.transform, tex, info, ratio > 0.75f, false);
+            if (!string.IsNullOrEmpty(info.caption)) AddCaption(info.caption);
+        }
+
+        /// Photos two to a row, cropped to the same 4:3 cells (an odd last one spans the row), each opening the lightbox.
+        void AddPhotoGrid(ImageInfo[] photos, int start)
+        {
+            for (int i = start; i < photos.Length; i += 2)
+            {
+                var row = new GameObject("Photo Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+                row.transform.SetParent(_content, false);
+                var h = row.GetComponent<HorizontalLayoutGroup>();
+                h.spacing = T.S1; h.childControlWidth = h.childControlHeight = true;
+                h.childForceExpandWidth = h.childForceExpandHeight = true;
+                row.AddComponent<HeightFromWidth>().ratio = 0.375f;   // two 4:3 cells side by side
+                for (int k = i; k < i + 2 && k < photos.Length; k++)
+                {
+                    var tex = Photo(photos[k].file);
+                    if (tex != null) PhotoCell(NewRect("Slot", row.transform), tex, photos[k], true, true);
+                }
+            }
+        }
+
+        /// Fills `parent` with the photo (cropped to cover when `crop`), an optional caption strip, and a click to enlarge.
+        RectTransform PhotoCell(RectTransform parent, Texture2D tex, ImageInfo info, bool crop, bool strip)
+        {
+            var frame = NewRect("Frame", parent); Fill(frame);
+            frame.gameObject.AddComponent<Image>().color = T.Raised;
+            var btn = frame.gameObject.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() => OpenLightbox(tex, info.caption));
+            frame.gameObject.AddComponent<RectMask2D>();
+
+            var img = NewRect("Image", frame); Fill(img);
+            var raw = img.gameObject.AddComponent<RawImage>();
+            raw.texture = tex; raw.raycastTarget = false;
+            if (crop) img.gameObject.AddComponent<CoverCrop>().texture = tex;
+
+            if (strip && !string.IsNullOrEmpty(info.caption))
+            {
+                var bar = NewRect("Caption", frame);
+                bar.anchorMin = Vector2.zero; bar.anchorMax = new Vector2(1, 0); bar.pivot = new Vector2(0.5f, 0);
+                bar.sizeDelta = new Vector2(0, 30);
+                var si = bar.gameObject.AddComponent<Image>(); si.color = T.Scrim; si.raycastTarget = false;
+                var t = NewText("Text", bar, info.caption, NevishkFonts.UI, T.SizeRowSub, T.Text);
+                Fill(t.rectTransform, 10, 0); t.alignment = TextAlignmentOptions.MidlineLeft;
+                t.textWrappingMode = TextWrappingModes.NoWrap; t.overflowMode = TextOverflowModes.Ellipsis;
+            }
+
+            // Hover: a faint bone edge, matching the rows.
+            var edge = frame.gameObject.AddComponent<Outline>();
+            edge.effectColor = new Color(0, 0, 0, 0); edge.effectDistance = new Vector2(2, -2);
+            var hover = frame.gameObject.AddComponent<HoverEdge>(); hover.outline = edge; hover.on = T.Border * 3f;
+            return frame;
+        }
+
+        void AddCaption(string text)
+        {
+            var t = AddText(text, NevishkFonts.UI, T.SizeRowSub, T.TextMuted);
+            t.margin = new Vector4(0, -2, 0, T.S1);
+        }
+
+        void BuildLightbox()
+        {
+            _lightbox = NewRect("Lightbox", _canvasRect); Fill(_lightbox);
+            _lightbox.gameObject.AddComponent<Image>().color = new Color(0.03f, 0.03f, 0.02f, 0.92f);
+            var close = _lightbox.gameObject.AddComponent<Button>();
+            close.transition = Selectable.Transition.None;
+            close.onClick.AddListener(CloseLightbox);
+
+            var area = NewRect("Area", _lightbox); Fill(area, T.S6, T.S6 + T.S4);
+            var img = NewRect("Image", area);
+            img.anchorMin = img.anchorMax = img.pivot = new Vector2(0.5f, 0.5f);
+            _lightboxImage = img.gameObject.AddComponent<RawImage>(); _lightboxImage.raycastTarget = false;
+            _lightboxFit = img.gameObject.AddComponent<AspectRatioFitter>();
+            _lightboxFit.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+
+            _lightboxCaption = NewText("Caption", _lightbox, "", NevishkFonts.Reading, T.SizeBody, T.Text);
+            var cr = _lightboxCaption.rectTransform;
+            cr.anchorMin = new Vector2(0, 0); cr.anchorMax = new Vector2(1, 0); cr.pivot = new Vector2(0.5f, 0);
+            cr.sizeDelta = new Vector2(-T.S6 * 2, T.S6); cr.anchoredPosition = new Vector2(0, T.S1);
+            _lightboxCaption.alignment = TextAlignmentOptions.Center;
+
+            var hint = NewText("Hint", _lightbox, "×", NevishkFonts.UI, 32, T.TextMuted);
+            var hr = hint.rectTransform; hr.anchorMin = hr.anchorMax = hr.pivot = new Vector2(1, 1);
+            hr.sizeDelta = new Vector2(T.TouchTarget, T.TouchTarget); hr.anchoredPosition = new Vector2(-T.S2, -T.S2);
+            hint.alignment = TextAlignmentOptions.Center;
+
+            _lightbox.gameObject.SetActive(false);
+        }
+
+        void OpenLightbox(Texture2D tex, string caption)
+        {
+            _lightboxImage.texture = tex;
+            _lightboxFit.aspectRatio = (float)tex.width / tex.height;
+            _lightboxCaption.text = string.IsNullOrEmpty(caption) ? "" : $"<i>{caption}</i>";
+            _lightbox.SetAsLastSibling();
+            _lightbox.gameObject.SetActive(true);
+        }
+
+        public void CloseLightbox()
+        {
+            if (_lightbox != null) _lightbox.gameObject.SetActive(false);
+        }
+
+        TextMeshProUGUI AddText(string text, TMP_FontAsset font, float size, Color color)
+        {
+            var t = NewText("Text", _content, text, font, size, color);
+            t.textWrappingMode = TextWrappingModes.Normal;
+            return t;
+        }
+
+        void AddRow(string label, string sub, Action onClick, Color swatch, bool emphasise)
+        {
+            var go = new GameObject("Row", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(_content, false);
+            go.GetComponent<LayoutElement>().minHeight = T.RowHeight;
+            StyleButton(go.GetComponent<Button>(), go.GetComponent<Image>());
+            go.GetComponent<Button>().onClick.AddListener(() => onClick());
+
+            var bar = NewRect("Swatch", go.transform);
+            bar.anchorMin = new Vector2(0, 0); bar.anchorMax = new Vector2(0, 1); bar.pivot = new Vector2(0, 0.5f);
+            bar.sizeDelta = new Vector2(4, 0);
+            var barImg = bar.gameObject.AddComponent<Image>(); barImg.color = swatch; barImg.raycastTarget = false;
+
+            var t = NewText("Label", go.transform, label, NevishkFonts.UI, T.SizeUI + 1, emphasise ? T.Text : T.TextMuted);
+            var r = t.rectTransform; r.anchorMin = new Vector2(0, 0.5f); r.anchorMax = new Vector2(1, 1);
+            r.offsetMin = new Vector2(T.S2 + 4, 0); r.offsetMax = new Vector2(-T.S6, -8);
+            t.alignment = TextAlignmentOptions.BottomLeft; t.textWrappingMode = TextWrappingModes.NoWrap;
+            t.overflowMode = TextOverflowModes.Ellipsis;
+
+            var s = NewText("Sub", go.transform, sub, NevishkFonts.UI, T.SizeRowSub, T.TextMuted);
+            var sr = s.rectTransform; sr.anchorMin = new Vector2(0, 0); sr.anchorMax = new Vector2(1, 0.5f);
+            sr.offsetMin = new Vector2(T.S2 + 4, 8); sr.offsetMax = new Vector2(-T.S6, -2);
+            s.alignment = TextAlignmentOptions.TopLeft; s.textWrappingMode = TextWrappingModes.NoWrap;
+            s.overflowMode = TextOverflowModes.Ellipsis;
+
+            var chev = NewText("Chevron", go.transform, "›", NevishkFonts.UI, 28, T.Faint);
+            var cr = chev.rectTransform; cr.anchorMin = new Vector2(1, 0); cr.anchorMax = Vector2.one; cr.pivot = new Vector2(1, 0.5f);
+            cr.sizeDelta = new Vector2(T.S4, 0); cr.anchoredPosition = new Vector2(-T.S2, 0);
+            chev.alignment = TextAlignmentOptions.Center;
+        }
+
+        // ================================================================ static layout
+
+        void BuildHeader()
+        {
+            var header = NewRect("Header", _canvasRect);
+            _header = header;
+            header.anchorMin = header.anchorMax = header.pivot = new Vector2(0, 1);
+            header.anchoredPosition = new Vector2(T.S3, -T.S3);
+            header.sizeDelta = new Vector2(460, 172);
+            var bg = header.gameObject.AddComponent<Image>(); bg.color = T.Scrim;
+
+            var title = NewText("City", header, _db.city.name.ToUpperInvariant(), NevishkFonts.Display, 46, T.Text);
+            title.characterSpacing = 18;
+            Pin(title.rectTransform, T.S3, -T.S2, 56);
+
+            var tag = NewText("Tagline", header, $"<i>{_db.city.tagline}</i>", NevishkFonts.Reading, 16, T.TextMuted);
+            Pin(tag.rectTransform, T.S3, -T.S2 - 56, 24);
+
+            // Search field + two actions on one row, all 44 px tall.
+            float y = -T.S2 - 56 - 24 - T.S2;
+            _search = BuildSearchField(header);
+            var sr = (RectTransform)_search.transform;
+            sr.anchorMin = sr.anchorMax = sr.pivot = new Vector2(0, 1);
+            sr.anchoredPosition = new Vector2(T.S3, y); sr.sizeDelta = new Vector2(220, T.TouchTarget);
+
+            var reset = SmallButton(header, "Обзор", () => ResetClicked?.Invoke());
+            reset.anchorMin = reset.anchorMax = reset.pivot = new Vector2(0, 1);
+            reset.anchoredPosition = new Vector2(T.S3 + 220 + T.S1, y);
+
+            var arch = SmallButton(header, "Архив", () => Show(new Entry { id = null, render = RenderArchiveIndex }, false));
+            arch.anchorMin = arch.anchorMax = arch.pivot = new Vector2(0, 1);
+            arch.anchoredPosition = new Vector2(T.S3 + 220 + T.S1 + reset.sizeDelta.x + T.S1, y);
+
+            var story = SmallButton(header, "Сюжет", () => StoryToggled?.Invoke(!_storyOn));
+            story.anchorMin = story.anchorMax = story.pivot = new Vector2(0, 1);
+            story.anchoredPosition = new Vector2(arch.anchoredPosition.x + arch.sizeDelta.x + T.S1, y);
+            _storyButton = story.GetComponent<Image>();
+            arch = story;   // the header grows to fit the last button
+
+            // Controls hint (touch users get the gestures; the rest is in the README).
+            float hy = y - T.TouchTarget - T.S1;
+            string hint = Application.isMobilePlatform
+                ? "Палец — двигать · два пальца — масштаб и поворот"
+                : "Тянуть — двигать · колесо — масштаб · ПКМ — поворот · WASD";
+            var hintText = NewText("Hint", header, hint, NevishkFonts.UI, 13, T.TextMuted);
+            Pin(hintText.rectTransform, T.S3, hy, 20, T.S3);
+
+            header.sizeDelta = new Vector2(Mathf.Max(460, arch.anchoredPosition.x + arch.sizeDelta.x + T.S3), -hy + 20 + T.S2);
+        }
+
+        TMP_InputField BuildSearchField(Transform parent)
+        {
+            var go = new GameObject("Search", typeof(RectTransform), typeof(Image));
+            go.SetActive(false);   // TMP_InputField must have its parts assigned before OnEnable
+            go.transform.SetParent(parent, false);
+            go.GetComponent<Image>().color = T.Raised;
+
+            var area = NewRect("Text Area", go.transform);
+            area.anchorMin = Vector2.zero; area.anchorMax = Vector2.one;
+            area.offsetMin = new Vector2(T.S2, 4); area.offsetMax = new Vector2(-T.S2, -4);
+            area.gameObject.AddComponent<RectMask2D>();
+
+            var ph = NewText("Placeholder", area, "Поиск по лору…", NevishkFonts.UI, T.SizeUI, T.TextMuted);
+            Fill(ph.rectTransform); ph.alignment = TextAlignmentOptions.MidlineLeft; ph.fontStyle = FontStyles.Italic;
+            var txt = NewText("Text", area, "", NevishkFonts.UI, T.SizeUI, T.Text);
+            Fill(txt.rectTransform); txt.alignment = TextAlignmentOptions.MidlineLeft;
+
+            var input = go.AddComponent<TMP_InputField>();
+            input.textViewport = area; input.textComponent = txt; input.placeholder = ph;
+            input.fontAsset = NevishkFonts.UI; input.pointSize = T.SizeUI;
+            input.caretColor = T.Accent; input.customCaretColor = true;
+            input.selectionColor = new Color(T.Accent.r, T.Accent.g, T.Accent.b, 0.35f);
+            input.lineType = TMP_InputField.LineType.SingleLine;
+            StyleSelectable(input, go.GetComponent<Image>());
+
+            go.SetActive(true);
+            input.onValueChanged.AddListener(q =>
+            {
+                q = q.Trim();
+                if (q.Length >= 2) Show(new Entry { id = null, render = () => RenderSearch(q) }, false);
+                else if (PanelOpen && _current.id == null && _title.text.StartsWith("«")) Close();
+            });
+            return input;
+        }
+
+        // ---- legend: collapsible, closed by default
+        RectTransform _legend, _legendItems, _legendArrow;
+        bool _legendOpen;
+
+        void BuildLegend()
+        {
+            _legend = NewRect("Legend", _canvasRect);
+            _legend.anchorMin = _legend.anchorMax = _legend.pivot = new Vector2(0, 0);
+            _legend.anchoredPosition = new Vector2(T.S3, T.S2);
+            _legend.gameObject.AddComponent<Image>().color = T.Scrim;
+            var v = _legend.gameObject.AddComponent<VerticalLayoutGroup>();
+            v.padding = new RectOffset(0, 0, 0, 8); v.spacing = 0; v.childControlHeight = v.childControlWidth = true;
+            v.childForceExpandHeight = false;
+            var fit = _legend.gameObject.AddComponent<ContentSizeFitter>();
+            fit.horizontalFit = fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Header button: "ЛЕГЕНДА ›" — the arrow turns to show open/closed.
+            var head = new GameObject("Header", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement), typeof(HorizontalLayoutGroup));
+            head.transform.SetParent(_legend, false);
+            head.GetComponent<Image>().color = new Color(0, 0, 0, 0.001f);
+            head.GetComponent<LayoutElement>().minHeight = T.TouchTarget;
+            var hl = head.GetComponent<HorizontalLayoutGroup>();
+            hl.padding = new RectOffset(16, 14, 0, 0); hl.spacing = 10; hl.childAlignment = TextAnchor.MiddleLeft;
+            hl.childControlWidth = hl.childControlHeight = true; hl.childForceExpandWidth = false;
+            var title = NewText("Title", head.transform, "ЛЕГЕНДА", NevishkFonts.UIBold, 12, T.TextMuted);
+            title.characterSpacing = T.KickerTracking; title.alignment = TextAlignmentOptions.MidlineLeft;
+            var arrow = NewText("Arrow", head.transform, "›", NevishkFonts.UIBold, 22, T.TextMuted);
+            arrow.alignment = TextAlignmentOptions.Center;
+            arrow.gameObject.AddComponent<LayoutElement>().preferredWidth = 16;
+            _legendArrow = arrow.rectTransform;
+            head.GetComponent<Button>().onClick.AddListener(() => SetLegend(!_legendOpen));
+
+            _legendItems = NewRect("Items", _legend);
+            var iv = _legendItems.gameObject.AddComponent<VerticalLayoutGroup>();
+            iv.padding = new RectOffset(16, 16, 0, 4); iv.spacing = 4; iv.childControlHeight = iv.childControlWidth = true;
+            iv.childForceExpandHeight = false;
+            foreach (var c in _db.categories)
+            {
+                var col = NevishkColors.ForCategory(_db, c.id);
+                NewText(c.name, _legendItems, $"<size=150%><color={T.ToHex(col)}>•</color></size>  {c.name}", NevishkFonts.UI, 15, T.Text);
+            }
+            // Nearly every place is a building now, so explain how to read them instead of the old pin colour.
+            string how = Application.isMobilePlatform
+                ? "Нажмите на здание — откроется история места"
+                : "Наведите на здание — его название,\nнажмите — откроется история места";
+            how = "Точка у названия — тип места.\n" + how;
+            NewText("How", _legendItems, $"<i>{how}</i>", NevishkFonts.UI, 14, T.TextMuted);
+            SetLegend(false);
+        }
+
+        void SetLegend(bool open)
+        {
+            _legendOpen = open;
+            _legendItems.gameObject.SetActive(open);
+            _legendArrow.localEulerAngles = new Vector3(0, 0, open ? -90f : 0f);   // › closed, pointing down when open
+        }
+
+        // ---- districts: a drawer hidden below the screen edge, opened by a tab with an arrow
+        RectTransform _drawer, _drawerArrow;
+        bool _drawerOpen;
+        Coroutine _drawerAnim;
+        const float TabHeight = 30f;
+
+        void BuildDistrictBar()
+        {
+            _drawer = NewRect("District Drawer", _canvasRect);
+            _drawer.anchorMin = new Vector2(0, 0); _drawer.anchorMax = new Vector2(1, 0); _drawer.pivot = new Vector2(0.5f, 0);
+            _drawer.sizeDelta = new Vector2(0, T.BarHeight);
+            var bar = _drawer;
+            bar.gameObject.AddComponent<Image>().color = T.Scrim;
+
+            // The tab that sticks up from the drawer: "Районы" and an arrow.
+            var tab = new GameObject("Tab", typeof(RectTransform), typeof(Image), typeof(Button), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
+            tab.transform.SetParent(_drawer, false);
+            var tr = (RectTransform)tab.transform;
+            tr.anchorMin = tr.anchorMax = new Vector2(0.5f, 1); tr.pivot = new Vector2(0.5f, 0);
+            tr.anchoredPosition = Vector2.zero;
+            StyleButton(tab.GetComponent<Button>(), tab.GetComponent<Image>());
+            var tc = tab.GetComponent<Button>().colors; tc.normalColor = T.Scrim; tab.GetComponent<Button>().colors = tc;
+            var tl = tab.GetComponent<HorizontalLayoutGroup>();
+            tl.padding = new RectOffset(18, 18, 2, 2); tl.spacing = 8; tl.childAlignment = TextAnchor.MiddleCenter;
+            tl.childControlWidth = tl.childControlHeight = true; tl.childForceExpandWidth = false;
+            tab.GetComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            tr.sizeDelta = new Vector2(0, TabHeight);
+            var arrow = NewText("Arrow", tab.transform, "›", NevishkFonts.UIBold, 24, T.Text);
+            arrow.alignment = TextAlignmentOptions.Center;
+            arrow.gameObject.AddComponent<LayoutElement>().preferredWidth = 16;
+            _drawerArrow = arrow.rectTransform;
+            var label = NewText("Label", tab.transform, "Районы", NevishkFonts.UI, 15, T.Text);
+            label.alignment = TextAlignmentOptions.MidlineLeft;
+            tab.GetComponent<Button>().onClick.AddListener(() => SetDrawer(!_drawerOpen, false));
+
+            var scroll = bar.gameObject.AddComponent<ScrollRect>();
+            scroll.horizontal = true; scroll.vertical = false; scroll.movementType = ScrollRect.MovementType.Clamped;
+            var viewport = NewRect("Viewport", bar);
+            Fill(viewport);
+            viewport.gameObject.AddComponent<RectMask2D>();
+            var row = NewRect("Row", viewport);
+            row.anchorMin = new Vector2(0, 0); row.anchorMax = new Vector2(0, 1); row.pivot = new Vector2(0, 0.5f);
+            var h = row.gameObject.AddComponent<HorizontalLayoutGroup>();
+            h.padding = new RectOffset((int)T.S3, (int)T.S3, 10, 10); h.spacing = T.S1;
+            h.childForceExpandWidth = false; h.childControlWidth = true; h.childControlHeight = true;
+            row.gameObject.AddComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            scroll.viewport = viewport; scroll.content = row;
+
+            var list = new List<DistrictInfo>(_db.districts);
+            list.Sort((a, b) => a.number.CompareTo(b.number));
+            foreach (var d in list)
+            {
+                var go = new GameObject(d.name, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+                go.transform.SetParent(row, false);
+                StyleButton(go.GetComponent<Button>(), go.GetComponent<Image>());
+                var t = NewText("Label", go.transform,
+                    $"<b><color={T.ToHex(JsonColor(d.color))}>{d.number}</color></b>   {d.name}",
+                    NevishkFonts.UI, T.SizeUI, T.Text);
+                Fill(t.rectTransform, T.S2, 0); t.alignment = TextAlignmentOptions.Center;
+                go.GetComponent<LayoutElement>().preferredWidth = t.GetPreferredValues().x + T.S4 + 8;
+                go.GetComponent<LayoutElement>().minHeight = T.TouchTarget;
+
+                var line = NewRect("Active", go.transform);
+                line.anchorMin = new Vector2(0, 0); line.anchorMax = new Vector2(1, 0); line.pivot = new Vector2(0.5f, 0);
+                line.sizeDelta = new Vector2(0, 3);
+                var li = line.gameObject.AddComponent<Image>(); li.color = T.Accent; li.raycastTarget = false; li.enabled = false;
+                _districtUnderlines[d.id] = li;
+
+                var id = d.id;
+                go.GetComponent<Button>().onClick.AddListener(() => DistrictClicked?.Invoke(id));
+            }
+        }
+
+        /// Open/close the district drawer (slides up from the bottom edge; instant under reduced motion).
+        void SetDrawer(bool open, bool instant)
+        {
+            _drawerOpen = open;
+            _drawerArrow.localEulerAngles = new Vector3(0, 0, open ? -90f : 90f);   // ↑ to open, ↓ to close
+            if (_drawerAnim != null) StopCoroutine(_drawerAnim);
+            float target = open ? 0f : -T.BarHeight;
+            if (instant || ReducedMotion) { PlaceDrawer(target); return; }
+            _drawerAnim = StartCoroutine(SlideDrawer(target));
+        }
+
+        IEnumerator SlideDrawer(float target)
+        {
+            float start = _drawer.anchoredPosition.y, dur = 0.2f;
+            for (float t = 0; t < dur; t += Time.unscaledDeltaTime)
+            {
+                float k = 1f - Mathf.Pow(1f - t / dur, 3f);
+                PlaceDrawer(Mathf.Lerp(start, target, k));
+                yield return null;
+            }
+            PlaceDrawer(target);
+            _drawerAnim = null;
+        }
+
+        void PlaceDrawer(float y)
+        {
+            _drawer.anchoredPosition = new Vector2(0, y);
+            // The legend rides just above the drawer (and its tab), so they never overlap.
+            if (_legend != null) _legend.anchoredPosition = new Vector2(T.S3, T.BarHeight + y + T.S2);
+        }
+
+        void BuildPanel()
+        {
+            _panel = NewRect("Lore Panel", _canvasRect);
+            if (_portrait)
+            {
+                _panel.anchorMin = new Vector2(0, 0); _panel.anchorMax = new Vector2(1, 0.64f);
+                _panel.offsetMin = Vector2.zero; _panel.offsetMax = Vector2.zero;
+            }
+            else
+            {
+                _panel.anchorMin = new Vector2(1, 0); _panel.anchorMax = new Vector2(1, 1); _panel.pivot = new Vector2(1, 0.5f);
+                _panel.sizeDelta = new Vector2(T.PanelWidth, 0); _panel.anchoredPosition = Vector2.zero;
+            }
+            _panel.gameObject.AddComponent<Image>().color = T.Surface;
+            _panelGroup = _panel.gameObject.AddComponent<CanvasGroup>();
+
+            // Left edge rule, like a folder spine.
+            var spine = NewRect("Spine", _panel);
+            spine.anchorMin = new Vector2(0, 0); spine.anchorMax = new Vector2(0, 1); spine.pivot = new Vector2(0, 0.5f);
+            spine.sizeDelta = new Vector2(1, 0);
+            spine.gameObject.AddComponent<Image>().color = T.Border;
+
+            float g = _portrait ? T.S3 : T.PanelGutter;
+
+            var close = SmallButton(_panel, "×", Close);
+            close.anchorMin = close.anchorMax = close.pivot = new Vector2(1, 1);
+            close.anchoredPosition = new Vector2(-T.S2, -T.S2); close.sizeDelta = new Vector2(T.TouchTarget, T.TouchTarget);
+            close.GetComponentInChildren<TextMeshProUGUI>().fontSize = 28;
+
+            // Language switch: only shown for entries whose official text isn't Russian.
+            _langBtn = SmallButton(_panel, "Читать на русском", ToggleLanguage);
+            _langBtn.anchorMin = _langBtn.anchorMax = _langBtn.pivot = new Vector2(1, 1);
+            _langBtn.anchoredPosition = new Vector2(-T.S2 - T.TouchTarget - T.S1, -T.S2);
+            _langLabel = _langBtn.GetComponentInChildren<TextMeshProUGUI>();
+            _langLabel.fontSize = 15f;
+            _langBtn.gameObject.SetActive(false);
+
+            var back = SmallButton(_panel, "‹  Назад", Back);
+            back.anchorMin = back.anchorMax = back.pivot = new Vector2(0, 1);
+            back.anchoredPosition = new Vector2(g - 12, -T.S2);
+            _backBtn = back.GetComponent<Button>();
+
+            float top = -T.S2 - T.TouchTarget - T.S2;
+            _kicker = NewText("Kicker", _panel, "", NevishkFonts.UIBold, T.SizeKicker, T.Accent);
+            Pin(_kicker.rectTransform, g, top, 20, g); _kicker.characterSpacing = T.KickerTracking;
+
+            _title = NewText("Title", _panel, "", NevishkFonts.Display, T.SizeTitle, T.Text);
+            Pin(_title.rectTransform, g, top - 24, 104, g);
+            _title.enableAutoSizing = true; _title.fontSizeMin = T.SizeTitleMin; _title.fontSizeMax = T.SizeTitle;
+            _title.alignment = TextAlignmentOptions.TopLeft; _title.lineSpacing = -8;
+            _title.textWrappingMode = TextWrappingModes.Normal;
+
+            _meta = NewText("Meta", _panel, "", NevishkFonts.UI, T.SizeMeta, T.TextMuted);
+            Pin(_meta.rectTransform, g, top - 24 - 104 - 4, 24, g);
+            _meta.raycastTarget = true;
+            _meta.gameObject.AddComponent<TmpLinkHandler>().onLink = link =>
+            {
+                if (link.StartsWith("d:")) DistrictClicked?.Invoke(link.Substring(2));
+            };
+
+            float headerH = -(top - 24 - 104 - 4 - 24) + T.S2;
+            var rule = NewRect("Header Rule", _panel);
+            rule.anchorMin = new Vector2(0, 1); rule.anchorMax = new Vector2(1, 1); rule.pivot = new Vector2(0.5f, 1);
+            rule.offsetMin = new Vector2(g, -headerH - 1); rule.offsetMax = new Vector2(-g, -headerH);
+            rule.gameObject.AddComponent<Image>().color = T.Border;
+
+            // Scroll body
+            var scrollGo = new GameObject("Scroll", typeof(RectTransform), typeof(ScrollRect));
+            scrollGo.transform.SetParent(_panel, false);
+            var sr = (RectTransform)scrollGo.transform;
+            sr.anchorMin = Vector2.zero; sr.anchorMax = Vector2.one;
+            sr.offsetMin = new Vector2(g, 0); sr.offsetMax = new Vector2(-g + 20, -headerH - 1);
+            _scroll = scrollGo.GetComponent<ScrollRect>();
+            _scroll.horizontal = false; _scroll.scrollSensitivity = 40f; _scroll.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewport = NewRect("Viewport", sr);
+            viewport.anchorMin = Vector2.zero; viewport.anchorMax = Vector2.one; viewport.offsetMin = Vector2.zero;
+            viewport.offsetMax = new Vector2(-20, 0);
+            viewport.gameObject.AddComponent<RectMask2D>();
+            viewport.gameObject.AddComponent<Image>().color = new Color(0, 0, 0, 0.001f); // catches scroll input
+
+            _content = NewRect("Content", viewport);
+            _content.anchorMin = new Vector2(0, 1); _content.anchorMax = new Vector2(1, 1); _content.pivot = new Vector2(0.5f, 1);
+            _content.sizeDelta = Vector2.zero;
+            var v = _content.gameObject.AddComponent<VerticalLayoutGroup>();
+            v.spacing = T.S1; v.padding = new RectOffset(0, 0, (int)T.S3, (int)T.S6 + 16);
+            v.childControlHeight = true; v.childControlWidth = true; v.childForceExpandHeight = false;
+            _content.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            _scroll.viewport = viewport; _scroll.content = _content;
+
+            // Thin scrollbar in the gutter
+            var sbGo = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
+            sbGo.transform.SetParent(sr, false);
+            var sbr = (RectTransform)sbGo.transform;
+            sbr.anchorMin = new Vector2(1, 0); sbr.anchorMax = Vector2.one; sbr.pivot = new Vector2(1, 0.5f);
+            sbr.sizeDelta = new Vector2(6, -T.S2 * 2); sbr.anchoredPosition = Vector2.zero;
+            sbGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.04f);
+            var handle = NewRect("Handle", sbr); Fill(handle);
+            var hImg = handle.gameObject.AddComponent<Image>(); hImg.color = T.Faint;
+            var sb = sbGo.GetComponent<Scrollbar>(); sb.handleRect = handle; sb.targetGraphic = hImg; sb.direction = Scrollbar.Direction.BottomToTop;
+            _scroll.verticalScrollbar = sb;
+            _scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+        }
+
+        void BuildTooltip()
+        {
+            _tooltipRect = NewRect("Tooltip", _canvasRect);
+            _tooltipRect.anchorMin = _tooltipRect.anchorMax = new Vector2(0.5f, 0.5f);
+            _tooltipRect.pivot = new Vector2(0, 0);
+            var img = _tooltipRect.gameObject.AddComponent<Image>(); img.color = T.SurfaceSolid; img.raycastTarget = false;
+            var outline = _tooltipRect.gameObject.AddComponent<Outline>(); outline.effectColor = T.Border; outline.effectDistance = new Vector2(1, -1);
+            var fit = _tooltipRect.gameObject.AddComponent<ContentSizeFitter>();
+            fit.horizontalFit = fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var lay = _tooltipRect.gameObject.AddComponent<HorizontalLayoutGroup>();
+            lay.padding = new RectOffset(12, 12, 8, 8); lay.childControlWidth = lay.childControlHeight = true;
+            _tooltip = NewText("Text", _tooltipRect, "", NevishkFonts.UI, T.SizeMeta, T.Text);
+            _tooltip.textWrappingMode = TextWrappingModes.NoWrap;
+            _tooltipRect.gameObject.SetActive(false);
+        }
+
+        // ================================================================ helpers
+
+        /// Top-anchored strip at a given y, stretching between left and right insets.
+        static void Pin(RectTransform r, float left, float y, float height, float right = 24f)
+        {
+            r.anchorMin = new Vector2(0, 1); r.anchorMax = new Vector2(1, 1); r.pivot = new Vector2(0, 1);
+            r.offsetMin = new Vector2(left, y - height);
+            r.offsetMax = new Vector2(-right, y);
+        }
+
+        static void Fill(RectTransform r, float padX = 0, float padY = 0)
+        {
+            r.anchorMin = Vector2.zero; r.anchorMax = Vector2.one;
+            r.offsetMin = new Vector2(padX, padY); r.offsetMax = new Vector2(-padX, -padY);
+        }
+
+        static RectTransform NewRect(string name, Transform parent)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            return (RectTransform)go.transform;
+        }
+
+        static TextMeshProUGUI NewText(string name, Transform parent, string text, TMP_FontAsset font, float size, Color color)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var t = go.AddComponent<TextMeshProUGUI>();
+            t.font = font; t.fontSize = size; t.color = color; t.text = text;
+            t.raycastTarget = false; t.richText = true;
+            return t;
+        }
+
+        static void StyleSelectable(Selectable s, Image img)
+        {
+            img.color = Color.white;   // ColorBlock supplies the actual colours
+            s.targetGraphic = img;     // not auto-assigned for components added at runtime
+            var c = s.colors;
+            c.normalColor = T.Raised;
+            c.highlightedColor = T.RaisedHover;
+            c.selectedColor = T.RaisedHover;                     // keyboard focus stays visible
+            c.pressedColor = Color.Lerp(T.RaisedHover, T.Accent, 0.25f);
+            c.disabledColor = new Color(T.Raised.r, T.Raised.g, T.Raised.b, 0.5f);
+            c.colorMultiplier = 1f;
+            c.fadeDuration = T.HoverFade;
+            s.colors = c;
+        }
+
+        static void StyleButton(Button b, Image img) => StyleSelectable(b, img);
+
+        /// A smaller button for dense toolbars (34 px tall, 15 px type).
+        RectTransform CompactButton(Transform parent, string label, Action onClick)
+        {
+            var r = SmallButton(parent, label, onClick);
+            var t = r.GetComponentInChildren<TextMeshProUGUI>();
+            t.fontSize = 15f;
+            r.sizeDelta = new Vector2(t.GetPreferredValues().x + 22f, 34f);
+            return r;
+        }
+
+        RectTransform SmallButton(Transform parent, string label, Action onClick)
+        {
+            var go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(parent, false);
+            StyleButton(go.GetComponent<Button>(), go.GetComponent<Image>());
+            go.GetComponent<Button>().onClick.AddListener(() => onClick());
+            var r = (RectTransform)go.transform;
+            var t = NewText("Label", go.transform, label, NevishkFonts.UI, T.SizeUI, T.Text);
+            Fill(t.rectTransform);
+            t.alignment = TextAlignmentOptions.Center;
+            r.sizeDelta = new Vector2(Mathf.Max(T.TouchTarget, t.GetPreferredValues().x + T.S4), T.TouchTarget);
+            return r;
+        }
+
+        static void EnsureEventSystem()
+        {
+            if (EventSystem.current != null) return;
+            var es = new GameObject("EventSystem", typeof(EventSystem));
+#if ENABLE_INPUT_SYSTEM
+            es.AddComponent<InputSystemUIInputModule>();
+#else
+            es.AddComponent<StandaloneInputModule>();
+#endif
+        }
+    }
+
+    /// <summary>Layout element whose height is a fixed fraction of the width the parent layout gives it.
+    /// Read during the vertical layout pass, after widths are set, so it never re-dirties the layout.</summary>
+    public class HeightFromWidth : UIBehaviour, ILayoutElement
+    {
+        public float ratio = 0.5625f;
+        float H
+        {
+            get
+            {
+                float w = ((RectTransform)transform).rect.width;
+                if (w <= 1f) w = T.PanelWidth - 2 * T.PanelGutter - 20f;   // before the first layout pass
+                return Mathf.Round(w * ratio);
+            }
+        }
+        public float minHeight => H;
+        public float preferredHeight => H;
+        public float flexibleHeight => -1;
+        public float minWidth => -1;
+        public float preferredWidth => -1;
+        public float flexibleWidth => -1;
+        // uGUI 2.x (Unity 6.x) added max sizes to ILayoutElement; harmless extra members on older versions.
+        public float maxWidth => -1;
+        public float maxHeight => -1;
+        public int layoutPriority => 2;
+        public void CalculateLayoutInputHorizontal() { }
+        public void CalculateLayoutInputVertical() { }
+        protected override void OnRectTransformDimensionsChange()
+        {
+            // Width changed (e.g. portrait ↔ landscape): ask for another pass outside the current one.
+            if (isActiveAndEnabled && !CanvasUpdateRegistry.IsRebuildingLayout())
+                LayoutRebuilder.MarkLayoutForRebuild((RectTransform)transform);
+        }
+    }
+
+    /// <summary>Crops a RawImage's texture so it covers its rect without stretching (CSS object-fit: cover).</summary>
+    public class CoverCrop : UIBehaviour
+    {
+        public Texture texture;
+        protected override void OnEnable() { base.OnEnable(); Apply(); }
+        protected override void OnRectTransformDimensionsChange() => Apply();
+        void Apply()
+        {
+            var raw = GetComponent<RawImage>();
+            var r = ((RectTransform)transform).rect;
+            if (raw == null || texture == null || r.width <= 0 || r.height <= 0) return;
+            float rectAspect = r.width / r.height, texAspect = (float)texture.width / texture.height;
+            raw.uvRect = texAspect > rectAspect
+                ? new Rect((1 - rectAspect / texAspect) / 2, 0, rectAspect / texAspect, 1)
+                : new Rect(0, (1 - texAspect / rectAspect) / 2, 1, texAspect / rectAspect);
+        }
+    }
+
+    /// <summary>Shows an outline while the pointer is over the element.</summary>
+    public class HoverEdge : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+    {
+        public Outline outline;
+        public Color on;
+        public void OnPointerEnter(PointerEventData e) { if (outline) outline.effectColor = on; }
+        public void OnPointerExit(PointerEventData e) { if (outline) outline.effectColor = new Color(0, 0, 0, 0); }
+    }
+
+    /// <summary>Makes &lt;link&gt; tags inside a TextMeshProUGUI clickable.</summary>
+    public class TmpLinkHandler : MonoBehaviour, IPointerClickHandler
+    {
+        public Action<string> onLink;
+        TextMeshProUGUI _text;
+        void Awake() => _text = GetComponent<TextMeshProUGUI>();
+
+        public void OnPointerClick(PointerEventData e)
+        {
+            int i = TMP_TextUtilities.FindIntersectingLink(_text, e.position, null);
+            if (i >= 0) onLink?.Invoke(_text.textInfo.linkInfo[i].GetLinkID());
+        }
+    }
+
+    public static class NevishkColors
+    {
+        /// Category colours from the board legend, adjusted so every one reads on the dark UI and the map.
+        public static Color ForCategory(LoreDatabase db, string category)
+        {
+            switch (category)
+            {
+                case "production": return new Color(0.90f, 0.45f, 0.56f);      // rose (board: pink)
+                case "infrastructure": return new Color(0.42f, 0.75f, 0.48f);  // green
+                case "culture": return new Color(0.86f, 0.84f, 0.80f);         // board black → bone, else invisible on dark
+                case "education": return new Color(0.62f, 0.50f, 0.86f);       // violet
+                case "gathering": return new Color(0.58f, 0.62f, 0.68f);       // slate (board: grey)
+            }
+            var c = db.Category(category);
+            return c != null ? LoreDatabase.ParseColor(c.color, Color.gray) : Color.gray;
+        }
+    }
+}

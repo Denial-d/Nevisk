@@ -1,0 +1,55 @@
+# Publishes the web map on GitHub Pages.
+#
+# The build itself is made in Unity on your PC (menu Nevishk > Build for Web), which writes the
+# WebBuild/ folder. Commit and push that folder; whenever it changes on main, this workflow puts it
+# online. No Unity licence or secrets are needed here.
+#
+# One-time setup: repository Settings > Pages > Build and deployment > Source: GitHub Actions.
+name: Deploy web map
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "WebBuild/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push cancels an older one that hasn't finished.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out (the build only; no LFS needed)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: WebBuild
+          lfs: false
+
+      - name: Make sure there is a build
+        run: |
+          if [ ! -f WebBuild/index.html ]; then
+            echo "::error::WebBuild/index.html not found. In Unity run Nevishk > Build for Web, then commit and push the WebBuild folder."
+            exit 1
+          fi
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: WebBuild
+
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
