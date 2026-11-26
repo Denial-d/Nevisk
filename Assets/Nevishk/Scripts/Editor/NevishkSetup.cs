@@ -79,7 +79,9 @@ namespace Nevishk.EditorTools
         {
             ConfigureWeb();
             if (!File.Exists(ScenePath)) { EditorUtility.DisplayDialog("Nevishk", "Run Nevishk ▸ 1. Set Up Scene first.", "OK"); return; }
-            string outDir = Path.GetFullPath("Builds/Web");
+            // WebBuild/ at the project root is committed and published by .github/workflows/deploy-web.yml.
+            string outDir = Path.GetFullPath("WebBuild");
+            if (Directory.Exists(outDir)) Directory.Delete(outDir, true);   // no stale files from older builds
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { ScenePath },
@@ -88,7 +90,12 @@ namespace Nevishk.EditorTools
                 options = BuildOptions.None
             });
             Debug.Log($"[Nevishk] Web build {report.summary.result}: {outDir} ({report.summary.totalSize / (1024 * 1024f):F1} MB)");
-            if (report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorUtility.RevealInFinder(outDir);
+            if (report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded)
+            {
+                EditorUtility.DisplayDialog("Nevishk",
+                    "Web build ready in the WebBuild folder.\n\nCommit and push it with GitHub Desktop; once it is on main, the site updates within a minute or two.", "OK");
+                EditorUtility.RevealInFinder(outDir);
+            }
         }
 
         /// Headless web build for CI (GitHub Actions / game-ci): no dialogs, output to -customBuildPath if given,
