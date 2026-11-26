@@ -951,10 +951,11 @@ namespace Nevishk
                 float du = crown / mapWidth, dv = crown / _mapDepth;
                 if (IsWater(u, v) || IsWater(u + du, v) || IsWater(u - du, v) || IsWater(u, v + dv) || IsWater(u, v - dv)) return false;
                 if (Ground(u, v) < 0.4f) return false;
-                if (_roads != null && _roads.DistanceTo(w) < NevishkRoads.HalfWidth + (street ? 1.6f : crown + 1.5f)) return false;
+                // Street trees stand in the verge (from the kerb out); other trees keep their crown off the asphalt.
+                if (_roads != null && _roads.DistanceTo(w) < NevishkRoads.HalfWidth + (street ? 0.6f : crown * 0.7f + 0.8f)) return false;
                 if (NearModel(u, v, crown + 2f) || NearRail(w, NevishkRailroad.BedHalfWidth + crown + 1f) || NearPath(w, crown + 1f)
                     || NearBridge(w, crown + 3f) || InPrimeCity(w, crown)) return false;
-                return !InBuilding(w, crown * 0.8f + 1f);
+                return !InBuilding(w, crown * 0.55f + 0.6f);
             }
             Vector3 OnLand(Vector3 w) { w.y = _terrain.HeightAtWorld(w); return w; }
 
@@ -977,7 +978,7 @@ namespace Nevishk
                             var c = Vector3.Lerp(a, b, (next - along) / Mathf.Max(seg, 0.01f));
                             foreach (float side in new[] { -1f, 1f })
                             {
-                                var w = c + right * side * (NevishkRoads.HalfWidth + NevishkRoads.VergeWidth * 0.55f) + dir * (R() - 0.5f);
+                                var w = c + right * side * (NevishkRoads.HalfWidth + NevishkRoads.VergeWidth * 0.6f) + dir * (R() - 0.5f);
                                 float size = 0.85f + R() * 0.3f;
                                 if (Free(w, 2.6f * size, true) && green.Room(w, 6f)) green.Tree(OnLand(w), size, rng.Next());
                             }
@@ -990,7 +991,7 @@ namespace Nevishk
             // 2. Yards: a few trees round every building, more round the panel blocks.
             foreach (var f in _fillFootprints ?? new List<(Vector2, float)>())
             {
-                int tries = f.r > 5f ? 5 : 3;
+                int tries = f.r > 5f ? 8 : 5;
                 for (int k = 0; k < tries; k++)
                 {
                     float ang = R() * Mathf.PI * 2f, dist = f.r + 3.5f + R() * 7f;
@@ -998,6 +999,17 @@ namespace Nevishk
                     float size = 0.75f + R() * 0.55f;
                     if (Free(w, 2.6f * size, false) && green.Room(w, 5f)) green.Tree(OnLand(w), size, rng.Next());
                 }
+            }
+
+            // 3. Squares and gaps: open ground among the buildings fills with trees, like Кишинёв's courtyards.
+            //    Only near buildings, so the steppe round the city stays open.
+            int planted = 0;
+            for (int k = 0; k < 9000 && planted < 2500; k++)
+            {
+                var w = new Vector3(Mathf.Lerp(rect.xMin, rect.xMax, R()), 0f, Mathf.Lerp(rect.yMin, rect.yMax, R()));
+                if (!InBuilding(w, 22f)) continue;                 // "near some building" (within ~22 m of one)
+                float size = 0.7f + R() * 0.6f;
+                if (Free(w, 2.6f * size, false) && green.Room(w, 6.5f)) { green.Tree(OnLand(w), size, rng.Next()); planted++; }
             }
 
             green.Finish(_root, c => MatFor(c));

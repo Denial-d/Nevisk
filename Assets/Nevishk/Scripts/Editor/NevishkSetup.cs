@@ -59,6 +59,7 @@ namespace Nevishk.EditorTools
             var web = NamedBuildTarget.WebGL;
             PlayerSettings.productName = "Невишк";
             PlayerSettings.companyName = "Nevishk";
+            PlayerSettings.WebGL.template = "PROJECT:Nevishk";   // Assets/WebGLTemplates/Nevishk: full window, own loading screen
             PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Brotli;
             PlayerSettings.WebGL.decompressionFallback = true;   // works on GitHub Pages / any static host
             PlayerSettings.WebGL.dataCaching = true;
