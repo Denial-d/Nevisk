@@ -167,6 +167,7 @@ MonoBehaviour:
   rotateSpeed: 0.25
   zoomSpeed: 0.15
   smoothing: 10
+  zoomToCursor: 1
 --- !u!81 &82361026
 AudioListener:
   m_ObjectHideFlags: 0
@@ -402,10 +403,7 @@ MonoBehaviour:
   mapWidth: 1280
   pinHeight: 22
   districtLabelHeight: 70
-  background: {r: 0.101960786, g: 0.09803922, b: 0.08627451, a: 1}
-  fogColor: {r: 0.46666667, g: 0.45490196, b: 0.42352942, a: 1}
   atmosphere: 1
-  concrete: {r: 0.78, g: 0.77, b: 0.74, a: 1}
 --- !u!4 &448732749
 Transform:
   m_ObjectHideFlags: 0
